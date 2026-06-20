@@ -1,3 +1,10 @@
+/**
+ * components/Home/Plan/settings-dialog.tsx — Plan settings
+ *
+ * Settings dialog for the Plan/calendar (data management and view preferences).
+ *
+ * Spec: §6.4 / §7.
+ */
 "use client"
 
 import type React from "react"

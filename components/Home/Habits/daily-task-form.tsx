@@ -1,3 +1,11 @@
+/**
+ * components/Home/Habits/daily-task-form.tsx — Habit form
+ *
+ * The form for creating/editing a habit: name, type, goal/unit, incremental rule
+ * (start value + weekly increment), reward value, and category.
+ *
+ * Spec: §9.4 (habit data model).
+ */
 "use client"
 
 import type React from "react"
@@ -7,25 +15,29 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { type Task, TaskType, type Category } from "@/lib/types"
+import { type WeeklyTask, TaskType, type HabitFrequency } from "@/lib/types"
+import { normalizeTaskType } from "@/lib/habit-utils"
+import { useThemeStore } from "@/lib/theme-store"
 import { Badge } from "@/components/ui/badge"
-import { CheckCircle2, Clock, Hash, AlignLeft, TrendingUp, X, Plus, Tag } from "lucide-react"
+import { CheckCircle2, Clock, AlignLeft, TrendingUp, X, Plus, Target } from "lucide-react"
 
 interface TaskFormProps {
-  onSubmit: (task: Task) => void
+  onSubmit: (task: WeeklyTask) => void
   onCancel: () => void
-  initialTask?: Task | null
-  categories: Category[]
+  initialTask?: WeeklyTask | null
+  defaultFrequency?: HabitFrequency
 }
 
-export function TaskForm({ onSubmit, onCancel, initialTask, categories }: TaskFormProps) {
-  const [task, setTask] = useState<Task>({
+export function TaskForm({ onSubmit, onCancel, initialTask, defaultFrequency = "daily" }: TaskFormProps) {
+  const colors = useThemeStore((s) => s.colors)
+  const [task, setTask] = useState<WeeklyTask>({
     id: initialTask?.id || "",
     name: initialTask?.name || "",
-    type: initialTask?.type || TaskType.BOOLEAN,
+    type: initialTask ? normalizeTaskType(initialTask.type) : TaskType.BOOLEAN,
     goal: initialTask?.goal || 0,
     unit: initialTask?.unit || "",
-    categoryId: initialTask?.categoryId || undefined,
+    rewardValue: initialTask?.rewardValue || 10,
+    frequency: initialTask?.frequency || defaultFrequency,
     incrementalData: initialTask?.incrementalData || undefined,
   })
 
@@ -78,32 +90,26 @@ export function TaskForm({ onSubmit, onCancel, initialTask, categories }: TaskFo
   }
 
   const getTaskTypeIcon = (type: TaskType) => {
-    switch (type) {
+    const c = (color: string) => ({ color })
+    switch (normalizeTaskType(type)) {
       case TaskType.BOOLEAN:
-        return <CheckCircle2 className="h-4 w-4" />
-      case TaskType.TIME:
-        return <Clock className="h-4 w-4" />
-      case TaskType.COUNT:
-        return <Hash className="h-4 w-4" />
+        return <CheckCircle2 className="h-4 w-4" style={c(colors.habitBoolean)} />
+      case TaskType.GOAL:
+        return <Target className="h-4 w-4" style={c(colors.habitGoal)} />
       case TaskType.TEXT:
-        return <AlignLeft className="h-4 w-4" />
+        return <AlignLeft className="h-4 w-4" style={c(colors.habitText)} />
       case TaskType.INCREMENTAL:
-        return <TrendingUp className="h-4 w-4" />
+        return <TrendingUp className="h-4 w-4" style={c(colors.habitIncremental)} />
+      default:
+        return <Clock className="h-4 w-4" style={c(colors.habitGoal)} />
     }
   }
-
-  const getSelectedCategory = () => {
-    if (!task.categoryId) return null
-    return categories.find((category) => category.id === task.categoryId) || null
-  }
-
-  const selectedCategory = getSelectedCategory()
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="task-name">Task Name</Label>
+          <Label htmlFor="task-name">Habit Name</Label>
           <Input
             id="task-name"
             value={task.name}
@@ -114,135 +120,83 @@ export function TaskForm({ onSubmit, onCancel, initialTask, categories }: TaskFo
           />
         </div>
 
-        {/* Category selection */}
         <div className="space-y-2">
-          <Label htmlFor="task-category">Category (Optional)</Label>
+          <Label>Frequency</Label>
           <Select
-            value={task.categoryId || "none"}
-            onValueChange={(value) => setTask({ ...task, categoryId: value === "none" ? undefined : value })}
+            value={task.frequency || "daily"}
+            onValueChange={(value) => setTask({ ...task, frequency: value as HabitFrequency })}
           >
-            <SelectTrigger className="transition-all duration-200 focus:ring-2 focus:ring-purple-500">
-              <SelectValue placeholder="Select category" />
+            <SelectTrigger>
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">
-                <div className="flex items-center">
-                  <span className="text-muted-foreground">No category</span>
-                </div>
-              </SelectItem>
-              {categories.map((category) => (
-                <SelectItem key={category.id} value={category.id}>
-                  <div className="flex items-center">
-                    <div
-                      className="w-3 h-3 rounded-full mr-2"
-                      style={{ backgroundColor: category.color }}
-                      aria-hidden="true"
-                    />
-                    <span>{category.name}</span>
-                  </div>
-                </SelectItem>
-              ))}
+              <SelectItem value="daily">Daily</SelectItem>
+              <SelectItem value="weekly">Weekly</SelectItem>
+              <SelectItem value="monthly">Monthly</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* Display selected category as a badge */}
-        {selectedCategory && (
-          <div className="flex justify-start">
-            <Badge
-              variant="outline"
-              className="flex items-center gap-1 px-3 py-1"
-              style={{
-                borderColor: `${selectedCategory.color}40`,
-                backgroundColor: `${selectedCategory.color}10`,
-                color: selectedCategory.color,
-              }}
-            >
-              <Tag className="h-3 w-3" />
-              <span>{selectedCategory.name}</span>
-            </Badge>
-          </div>
-        )}
-
         <div className="space-y-2">
-          <Label htmlFor="task-type">Task Type</Label>
+          <Label htmlFor="task-type">Habit Type</Label>
           <Select
-            value={task.type}
+            value={normalizeTaskType(task.type)}
             onValueChange={(value) =>
               setTask({
                 ...task,
                 type: value as TaskType,
-                // Reset other properties when changing type
-                goal: value === TaskType.TIME || value === TaskType.COUNT ? task.goal : undefined,
-                unit: value === TaskType.TIME || value === TaskType.COUNT ? task.unit : undefined,
+                goal: value === TaskType.GOAL ? task.goal : undefined,
+                unit: value === TaskType.GOAL ? task.unit : undefined,
                 incrementalData: value === TaskType.INCREMENTAL ? task.incrementalData : undefined,
               })
             }
           >
-            <SelectTrigger className="transition-all duration-200 focus:ring-2 focus:ring-purple-500">
-              <SelectValue placeholder="Select task type" />
+            <SelectTrigger>
+              <SelectValue placeholder="Select habit type" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={TaskType.BOOLEAN} className="flex items-center">
+              <SelectItem value={TaskType.BOOLEAN}>
                 <div className="flex items-center">
-                  <CheckCircle2 className="h-4 w-4 mr-2 text-green-500" />
-                  <span>Yes/No Task</span>
+                  <CheckCircle2 className="h-4 w-4 mr-2" style={{ color: colors.habitBoolean }} />
+                  Yes/No
                 </div>
               </SelectItem>
-              <SelectItem value={TaskType.TIME}>
+              <SelectItem value={TaskType.GOAL}>
                 <div className="flex items-center">
-                  <Clock className="h-4 w-4 mr-2 text-blue-500" />
-                  <span>Time-based Task</span>
-                </div>
-              </SelectItem>
-              <SelectItem value={TaskType.COUNT}>
-                <div className="flex items-center">
-                  <Hash className="h-4 w-4 mr-2 text-orange-500" />
-                  <span>Count-based Task</span>
+                  <Target className="h-4 w-4 mr-2" style={{ color: colors.habitGoal }} />
+                  Goal-based (time, count, etc.)
                 </div>
               </SelectItem>
               <SelectItem value={TaskType.TEXT}>
                 <div className="flex items-center">
-                  <AlignLeft className="h-4 w-4 mr-2 text-purple-500" />
-                  <span>Text Entry Task</span>
+                  <AlignLeft className="h-4 w-4 mr-2" style={{ color: colors.habitText }} />
+                  Text Entry
                 </div>
               </SelectItem>
               <SelectItem value={TaskType.INCREMENTAL}>
                 <div className="flex items-center">
-                  <TrendingUp className="h-4 w-4 mr-2 text-cyan-500" />
-                  <span>Incremental Goal Task</span>
+                  <TrendingUp className="h-4 w-4 mr-2" style={{ color: colors.habitIncremental }} />
+                  Incremental Goal
                 </div>
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        {/* Task type badge */}
         <div className="flex justify-start">
-          <Badge
-            variant="outline"
-            className={`
-              flex items-center gap-1 px-3 py-1
-              ${task.type === TaskType.BOOLEAN ? "border-secondary/30 bg-secondary/10 text-secondary" : ""}
-              ${task.type === TaskType.TIME ? "border-primary/30 bg-primary/10 text-primary" : ""}
-              ${task.type === TaskType.COUNT ? "border-accent/30 bg-accent/10 text-accent" : ""}
-              ${task.type === TaskType.TEXT ? "border-mint/30 bg-mint/10 text-mint" : ""}
-              ${task.type === TaskType.INCREMENTAL ? "border-sage/30 bg-sage/10 text-sage" : ""}
-            `}
-          >
+          <Badge variant="outline" className="flex items-center gap-1 px-3 py-1">
             {getTaskTypeIcon(task.type)}
             <span>
-              {task.type === TaskType.BOOLEAN && "Yes/No Task"}
-              {task.type === TaskType.TIME && "Time-based Task"}
-              {task.type === TaskType.COUNT && "Count-based Task"}
-              {task.type === TaskType.TEXT && "Text Entry Task"}
-              {task.type === TaskType.INCREMENTAL && "Incremental Goal Task"}
+              {task.type === TaskType.BOOLEAN && "Yes/No"}
+              {(task.type === TaskType.GOAL || task.type === TaskType.TIME || task.type === TaskType.COUNT) &&
+                "Goal-based"}
+              {task.type === TaskType.TEXT && "Text Entry"}
+              {task.type === TaskType.INCREMENTAL && "Incremental Goal"}
             </span>
           </Badge>
         </div>
 
-        {/* Conditional fields based on task type */}
-        {(task.type === TaskType.TIME || task.type === TaskType.COUNT) && (
+        {(task.type === TaskType.GOAL || task.type === TaskType.TIME || task.type === TaskType.COUNT) && (
           <div className="grid grid-cols-2 gap-4 p-4 border rounded-lg bg-muted/20">
             <div className="space-y-2">
               <Label htmlFor="task-goal">Goal Amount</Label>
@@ -250,7 +204,7 @@ export function TaskForm({ onSubmit, onCancel, initialTask, categories }: TaskFo
                 id="task-goal"
                 type="number"
                 min="0"
-                step={task.type === TaskType.COUNT ? "0.5" : "1"}
+                step="0.5"
                 value={task.goal || ""}
                 onChange={(e) =>
                   setTask({

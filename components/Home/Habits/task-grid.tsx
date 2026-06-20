@@ -1,3 +1,13 @@
+/**
+ * components/Home/Habits/task-grid.tsx — Habit grid
+ *
+ * The spreadsheet-style grid: habits as rows, the 7 weekdays as columns. Renders
+ * the correct input per habit type (checkbox / minutes / count / textarea /
+ * incremental), per-habit weekly progress, the per-day "Daily Completion" row,
+ * and edit/delete actions.
+ *
+ * Spec: §9.2 (habit types), §9.3 (display & interaction).
+ */
 "use client"
 
 import { useState } from "react"
@@ -7,22 +17,22 @@ import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
 import { Edit, Trash2, CheckCircle2, Clock, Hash, AlignLeft, TrendingUp } from "lucide-react"
-import { type Task, TaskType, type TaskCompletion, type WeeklyData, type Category } from "@/lib/weekly-task-types"
+import { type WeeklyTask as Task, TaskType, type TaskCompletion, type WeeklyData, type HabitFrequency } from "@/lib/types"
+import { formatLocalDateKey, formatDateDisplay, getDayOfWeek, isToday } from "@/lib/date-utils"
+import { isHabitGoalMet, isGoalType } from "@/lib/habit-utils"
+import { useThemeStore } from "@/lib/theme-store"
 import { Progress } from "@/components/ui/progress"
-import { formatDateDisplay, getDayOfWeek, isToday } from "@/lib/weekly-date-utils"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 interface TaskGridProps {
   tasks: Task[]
   weeklyData: WeeklyData
   weekDates: Date[]
-  categories: Category[]
   onUpdateTaskCompletion: (taskId: string, date: Date, completion: TaskCompletion) => void
   onEditTask: (task: Task) => void
   onDeleteTask: (taskId: string) => void
   calculateTaskPercentage: (taskId: string) => number
   calculateDayPercentage: (date: Date, index: number) => number
-  selectedCategoryId?: string
   hideCompleted?: boolean
   viewMode?: "week" | "day"
   selectedDate?: Date
@@ -33,56 +43,35 @@ export function TaskGrid({
   tasks,
   weeklyData,
   weekDates,
-  categories,
   onUpdateTaskCompletion,
   onEditTask,
   onDeleteTask,
   calculateTaskPercentage,
   calculateDayPercentage,
-  selectedCategoryId,
   hideCompleted = false,
   viewMode = "week",
   selectedDate,
   onDateSelect,
 }: TaskGridProps) {
   const [expandedTask, setExpandedTask] = useState<string | null>(null)
+  const colors = useThemeStore((s) => s.colors)
 
-  // Filter tasks by selected category if any
-  let filteredTasks = selectedCategoryId ? tasks.filter((task) => task.categoryId === selectedCategoryId) : tasks
+  let filteredTasks = tasks
 
-  // Filter out completed tasks if hideCompleted is true
   if (hideCompleted && viewMode === "day" && selectedDate) {
-    const dateKey = selectedDate.toISOString().split("T")[0]
-    filteredTasks = filteredTasks.filter((task) => {
-      const completion = weeklyData[dateKey]?.[task.id]
-      return !completion?.completed
-    })
+    const dateKey = formatLocalDateKey(selectedDate)
+    filteredTasks = filteredTasks.filter((task) => !isHabitGoalMet(task, weeklyData[dateKey]?.[task.id]))
   }
 
   const handleBooleanChange = (taskId: string, date: Date, checked: boolean | "indeterminate") => {
     onUpdateTaskCompletion(taskId, date, { completed: checked === true })
   }
 
-  const handleTimeChange = (taskId: string, date: Date, value: string) => {
+  const handleGoalChange = (taskId: string, date: Date, value: string) => {
     const task = tasks.find((t) => t.id === taskId)
-    if (!task || task.type !== TaskType.TIME) return
-
-    const minutes = Number.parseInt(value) || 0
-    onUpdateTaskCompletion(taskId, date, {
-      value: minutes,
-      goal: task.goal || 0,
-    })
-  }
-
-  const handleCountChange = (taskId: string, date: Date, value: string) => {
-    const task = tasks.find((t) => t.id === taskId)
-    if (!task || task.type !== TaskType.COUNT) return
-
-    const count = Number.parseFloat(value) || 0
-    onUpdateTaskCompletion(taskId, date, {
-      value: count,
-      goal: task.goal || 0,
-    })
+    if (!task || !isGoalType(task.type)) return
+    const num = Number.parseFloat(value) || 0
+    onUpdateTaskCompletion(taskId, date, { value: num, goal: task.goal || 0 })
   }
 
   const handleTextChange = (taskId: string, date: Date, text: string) => {
@@ -100,7 +89,7 @@ export function TaskGrid({
         d.getDate() === date.getDate() && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear(),
     )
 
-    const existingCompletion = weeklyData[date.toISOString().split("T")[0]]?.[taskId] || { incrementalValues: {} }
+    const existingCompletion = weeklyData[formatLocalDateKey(date)]?.[taskId] || { incrementalValues: {} }
     const updatedValues = {
       ...(existingCompletion.incrementalValues || {}),
       [key]: currentValue,
@@ -126,17 +115,18 @@ export function TaskGrid({
   }
 
   const getTaskTypeIcon = (type: TaskType) => {
+    const style = (color: string) => ({ color })
     switch (type) {
       case TaskType.BOOLEAN:
-        return <CheckCircle2 className="h-4 w-4 text-green-500" />
+        return <CheckCircle2 className="h-4 w-4" style={style(colors.habitBoolean)} />
+      case TaskType.GOAL:
       case TaskType.TIME:
-        return <Clock className="h-4 w-4 text-blue-500" />
       case TaskType.COUNT:
-        return <Hash className="h-4 w-4 text-orange-500" />
+        return <Clock className="h-4 w-4" style={style(colors.habitGoal)} />
       case TaskType.TEXT:
-        return <AlignLeft className="h-4 w-4 text-purple-500" />
+        return <AlignLeft className="h-4 w-4" style={style(colors.habitText)} />
       case TaskType.INCREMENTAL:
-        return <TrendingUp className="h-4 w-4 text-cyan-500" />
+        return <TrendingUp className="h-4 w-4" style={style(colors.habitIncremental)} />
     }
   }
 
@@ -148,13 +138,8 @@ export function TaskGrid({
     return "bg-gray-400"
   }
 
-  const getCategoryForTask = (task: Task) => {
-    if (!task.categoryId) return null
-    return categories.find((category) => category.id === task.categoryId) || null
-  }
-
   const renderTaskCell = (task: Task, date: Date) => {
-    const dateKey = date.toISOString().split("T")[0]
+    const dateKey = formatLocalDateKey(date)
     const completion = weeklyData[dateKey]?.[task.id]
     const dayIndex = weekDates.findIndex(
       (d) =>
@@ -173,20 +158,8 @@ export function TaskGrid({
           </div>
         )
 
+      case TaskType.GOAL:
       case TaskType.TIME:
-        return (
-          <div className="flex items-center gap-1">
-            <Input
-              type="number"
-              min="0"
-              value={completion?.value?.toString() || "0"}
-              onChange={(e) => handleTimeChange(task.id, date, e.target.value)}
-              className="w-16 text-center border-blue-200 focus:border-blue-500 transition-all duration-200"
-            />
-            <span className="text-sm text-muted-foreground">/ {task.goal}</span>
-          </div>
-        )
-
       case TaskType.COUNT:
         return (
           <div className="flex items-center gap-1">
@@ -195,8 +168,9 @@ export function TaskGrid({
               min="0"
               step="0.5"
               value={completion?.value?.toString() || "0"}
-              onChange={(e) => handleCountChange(task.id, date, e.target.value)}
-              className="w-16 text-center border-orange-200 focus:border-orange-500 transition-all duration-200"
+              onChange={(e) => handleGoalChange(task.id, date, e.target.value)}
+              className="w-16 text-center transition-all duration-200"
+              style={{ borderColor: `${colors.habitGoal}40` }}
             />
             <span className="text-sm text-muted-foreground">/ {task.goal}</span>
           </div>
@@ -288,18 +262,13 @@ export function TaskGrid({
           {filteredTasks.length === 0 ? (
             <TableRow>
               <TableCell colSpan={weekDates.length + 3} className="h-24 text-center">
-                {selectedCategoryId ? (
-                  <div className="text-muted-foreground">No tasks in this category. Add a task to get started.</div>
-                ) : (
-                  <div className="text-muted-foreground">No tasks added yet. Add a task to get started.</div>
-                )}
+                <div className="text-muted-foreground">No habits yet. Add one to get started.</div>
               </TableCell>
             </TableRow>
           ) : (
             filteredTasks.map((task) => {
               const percentage = calculateTaskPercentage(task.id)
               const progressColor = getProgressColor(percentage)
-              const category = getCategoryForTask(task)
 
               return (
                 <TableRow key={task.id} className="task-row-hover group">
@@ -310,13 +279,6 @@ export function TaskGrid({
                     <div className="flex items-center gap-2">
                       {getTaskTypeIcon(task.type)}
                       <span>{task.name}</span>
-                      {category && (
-                        <div
-                          className="w-3 h-3 rounded-full ml-1"
-                          style={{ backgroundColor: category.color }}
-                          title={category.name}
-                        />
-                      )}
                     </div>
                   </TableCell>
 

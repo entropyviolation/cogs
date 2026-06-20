@@ -1,3 +1,13 @@
+/**
+ * components/inbox.tsx — Inbox & clarification
+ *
+ * Lists unclarified captures and hosts the per-item Clarification dialog where a
+ * raw thought is turned into a fully-specified task (description, duration,
+ * reward, urgency/importance, categories), plus a "Clarify All" helper. Clarified
+ * items leave the Inbox and live in their assigned categories/lists.
+ *
+ * Spec: §4.4 (Clarification), §4.5 (Inbox as a living list).
+ */
 "use client"
 
 import { useState, useMemo } from "react"
@@ -9,12 +19,32 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Edit, Trash, ArrowRight, InboxIcon, Clock, Award, AlertTriangle, Star, Save, X } from "lucide-react"
+import { Edit, Trash, ArrowRight, InboxIcon, Clock, Award, AlertTriangle, Star, Save, X, ChevronDown } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import type { Task } from "@/lib/types"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import type { Task, AttributeDefinition, AttributeValue } from "@/lib/types"
+import { categoryIsNextActions, withCategoryDefaults } from "@/lib/item-utils"
+import { ListPicker } from "@/components/Lists/list-picker"
+import { AdHocAttributesEditor, mergeListAttributes, AttributeValuesEditor } from "@/components/Lists/attribute-editor"
 
 interface InboxProps {
   onTaskSelect: (taskId: string) => void
+}
+
+function asDate(value: Date | string | undefined): Date | null {
+  if (!value) return null
+  const d = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function formatTaskDate(value: Date | string | undefined): string {
+  const d = asDate(value)
+  return d ? d.toLocaleDateString() : "—"
+}
+
+function formatTaskDateTime(value: Date | string | undefined): string {
+  const d = asDate(value)
+  return d ? d.toLocaleString() : "—"
 }
 
 // Clarification Dialog Component
@@ -30,38 +60,51 @@ function TaskClarificationDialog({
   onSave: (updatedTask: Task) => void
 }) {
   const categories = useTaskStore((state) => state.categories)
+  const folders = useTaskStore((state) => state.folders)
   const [taskDescription, setTaskDescription] = useState(task.taskDescription || "")
   const [estimatedDuration, setEstimatedDuration] = useState(task.estimatedDuration?.toString() || "30")
   const [rewardValue, setRewardValue] = useState(task.rewardValue?.toString() || "5")
   const [urgency, setUrgency] = useState(task.urgency?.toString() || "3")
   const [importance, setImportance] = useState(task.importance?.toString() || "3")
   const [selectedCategories, setSelectedCategories] = useState<string[]>(task.categories || [])
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [adhocDefs, setAdhocDefs] = useState<AttributeDefinition[]>([])
+  const [attributeValues, setAttributeValues] = useState<Record<string, AttributeValue>>(task.attributes || {})
+
+  const listAttributeDefs = useMemo(
+    () => mergeListAttributes(categories, selectedCategories),
+    [categories, selectedCategories],
+  )
+
+  const isNextActionTarget = selectedCategories.some((cid) => categoryIsNextActions(cid, folders))
 
   const handleSave = () => {
-    const updatedTask: Task = {
+    let updatedTask: Task = {
       ...task,
+      createdAt: asDate(task.createdAt) ?? new Date(),
       taskDescription,
-      estimatedDuration: Number.parseInt(estimatedDuration) || 30,
-      rewardValue: Number.parseInt(rewardValue) || 5,
-      urgency: Number.parseInt(urgency) || 3,
-      importance: Number.parseInt(importance) || 3,
       categories: selectedCategories,
-      category: "clarified",
-      cognitiveLoad: task.cognitiveLoad || 2,
-      entropy: task.entropy || 0.5,
-      context: task.context || "@general",
-      dependencies: task.dependencies || [],
-      allowPartialCompletion: task.allowPartialCompletion || false,
-      minimumChunkSize: task.minimumChunkSize || 15,
+      category: selectedCategories.length ? "clarified" : "list",
+      attributes: { ...attributeValues },
+    }
+    selectedCategories.forEach((cid) => {
+      const cat = categories.find((c) => c.id === cid)
+      updatedTask = withCategoryDefaults(updatedTask, cat)
+    })
+    if (isNextActionTarget) {
+      updatedTask.estimatedDuration = Number.parseInt(estimatedDuration) || 30
+      updatedTask.rewardValue = Number.parseInt(rewardValue) || 5
+      updatedTask.urgency = Number.parseInt(urgency) || 3
+      updatedTask.importance = Number.parseInt(importance) || 3
+      updatedTask.cognitiveLoad = task.cognitiveLoad || 2
+      updatedTask.entropy = task.entropy || 0.5
+      updatedTask.context = task.context || "@general"
+      updatedTask.dependencies = task.dependencies || []
+      updatedTask.allowPartialCompletion = task.allowPartialCompletion || false
+      updatedTask.minimumChunkSize = task.minimumChunkSize || 15
     }
     onSave(updatedTask)
     onClose()
-  }
-
-  const addToCategory = (categoryId: string) => {
-    if (!selectedCategories.includes(categoryId)) {
-      setSelectedCategories([...selectedCategories, categoryId])
-    }
   }
 
   const removeFromCategory = (categoryId: string) => {
@@ -73,7 +116,7 @@ function TaskClarificationDialog({
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader className="pb-4">
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-xl font-bold">Clarify Task: {task.description}</DialogTitle>
+            <DialogTitle className="text-xl font-bold">Clarify Idea: {task.description}</DialogTitle>
             <Button variant="ghost" size="icon" onClick={onClose}>
               <X className="h-4 w-4" />
             </Button>
@@ -98,6 +141,7 @@ function TaskClarificationDialog({
                 />
               </div>
 
+              {isNextActionTarget && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="estimated-duration" className="text-sm font-medium flex items-center gap-2">
@@ -133,7 +177,9 @@ function TaskClarificationDialog({
                   />
                 </div>
               </div>
+              )}
 
+              {isNextActionTarget && (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="urgency" className="text-sm font-medium flex items-center gap-2">
@@ -173,11 +219,12 @@ function TaskClarificationDialog({
                   </Select>
                 </div>
               </div>
+              )}
             </div>
 
             <div className="space-y-4">
               <div className="space-y-3">
-                <Label className="text-sm font-medium">Categories</Label>
+                <Label className="text-sm font-medium">Lists</Label>
                 <div className="flex flex-wrap gap-2">
                   {selectedCategories.map((categoryId) => {
                     const category = categories.find((c) => c.id === categoryId)
@@ -203,31 +250,46 @@ function TaskClarificationDialog({
                   })}
                 </div>
 
-                <Select onValueChange={addToCategory} value="">
-                  <SelectTrigger>
-                    <SelectValue placeholder="Add to category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories
-                      .filter((category) => !selectedCategories.includes(category.id))
-                      .map((category) => (
-                        <SelectItem key={category.id} value={category.id}>
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: category.color }} />
-                            {category.name}
-                          </div>
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                <ListPicker
+                  selected={selectedCategories}
+                  onChange={setSelectedCategories}
+                  allowMultiToggle
+                />
               </div>
+
+              <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full justify-between">
+                    Advanced — attributes
+                    <ChevronDown className={`h-4 w-4 transition-transform${showAdvanced ? " rotate-180" : ""}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-3 space-y-3">
+                  {listAttributeDefs.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">From selected lists</Label>
+                      <AttributeValuesEditor
+                        definitions={listAttributeDefs}
+                        values={attributeValues}
+                        onChange={setAttributeValues}
+                      />
+                    </div>
+                  )}
+                  <AdHocAttributesEditor
+                    definitions={adhocDefs}
+                    values={attributeValues}
+                    onDefinitionsChange={setAdhocDefs}
+                    onValuesChange={setAttributeValues}
+                  />
+                </CollapsibleContent>
+              </Collapsible>
 
               <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
                 <h3 className="font-medium text-sm">Task Information</h3>
                 <div className="space-y-2 text-sm text-muted-foreground">
                   <div className="flex justify-between">
                     <span>Created:</span>
-                    <span>{task.createdAt.toLocaleDateString()}</span>
+                    <span>{formatTaskDate(task.createdAt)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Current Status:</span>
@@ -279,21 +341,10 @@ export function Inbox({ onTaskSelect }: InboxProps) {
   }
 
   const handleClarifyAll = () => {
-    // Move all inbox tasks to clarified status with basic defaults
     inboxTasks.forEach((task) => {
       updateTask({
         ...task,
-        category: "clarified",
-        estimatedDuration: task.estimatedDuration || 30,
-        cognitiveLoad: task.cognitiveLoad || 2,
-        urgency: task.urgency || 3,
-        importance: task.importance || 3,
-        entropy: task.entropy || 0.5,
-        rewardValue: task.rewardValue || 5,
-        context: task.context || "@general",
-        dependencies: task.dependencies || [],
-        allowPartialCompletion: task.allowPartialCompletion || false,
-        minimumChunkSize: task.minimumChunkSize || 15,
+        category: task.categories?.length ? "clarified" : "list",
       })
     })
     setOpen(false)
@@ -317,7 +368,7 @@ export function Inbox({ onTaskSelect }: InboxProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <InboxIcon className="h-5 w-5" />
-              Inbox - Clarify Your Tasks
+              Inbox — Clarify Your Ideas
             </DialogTitle>
           </DialogHeader>
 
@@ -326,7 +377,7 @@ export function Inbox({ onTaskSelect }: InboxProps) {
               <div className="text-center py-8 text-muted-foreground">
                 <InboxIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>Your inbox is empty!</p>
-                <p className="text-sm">Use Quick Add or Bulk Add to capture new tasks.</p>
+                <p className="text-sm">Use Quick Add or Bulk Add to capture new ideas.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -336,14 +387,14 @@ export function Inbox({ onTaskSelect }: InboxProps) {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
                           <p className="font-medium">{task.description}</p>
-                          <p className="text-sm text-muted-foreground mt-1">Added {task.createdAt.toLocaleString()}</p>
+                          <p className="text-sm text-muted-foreground mt-1">Added {formatTaskDateTime(task.createdAt)}</p>
                         </div>
                         <div className="flex gap-2">
                           <Button
                             variant="outline"
                             size="icon"
                             onClick={() => handleClarifyTask(task)}
-                            title="Clarify this task"
+                            title="Clarify this idea"
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
@@ -351,7 +402,7 @@ export function Inbox({ onTaskSelect }: InboxProps) {
                             variant="outline"
                             size="icon"
                             onClick={() => deleteTask(task.id)}
-                            title="Delete this task"
+                            title="Delete this idea"
                           >
                             <Trash className="h-4 w-4" />
                           </Button>
@@ -367,11 +418,11 @@ export function Inbox({ onTaskSelect }: InboxProps) {
           {inboxTasks.length > 0 && (
             <div className="flex justify-between items-center pt-4 border-t">
               <p className="text-sm text-muted-foreground">
-                {inboxTasks.length} task{inboxTasks.length !== 1 ? "s" : ""} to clarify
+                {inboxTasks.length} idea{inboxTasks.length !== 1 ? "s" : ""} to clarify
               </p>
               <Button onClick={handleClarifyAll} className="gap-2">
                 <ArrowRight className="h-4 w-4" />
-                Clarify All Tasks
+                Clarify All Ideas
               </Button>
             </div>
           )}

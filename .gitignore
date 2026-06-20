@@ -24,4 +24,10 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.tsvenv/
+next-env.d.ts
+
+# electron build output
+/dist/
+
+# python venv
+venv/

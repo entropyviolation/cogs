@@ -1,3 +1,13 @@
+/**
+ * components/enhanced-task-detail.tsx — Full-screen task detail/editor
+ *
+ * The full task editor opened from the app shell when a task is selected. Exposes
+ * all task attributes — details, description, scheduling, dependencies, subtasks,
+ * partial completion, repeat settings, and analysis.
+ *
+ * Spec: §5.5 (Item detail view). Consolidation target with
+ * `task-detail-popup.tsx` per docs/SPEC_MAPPING.md §5.
+ */
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
@@ -154,7 +164,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
       // Update the parent task to include this subtask
       const updatedTask = {
         ...task,
-        subtasks: [...(task.subtasks || []), subtask.id],
+        subtasks: [...(task.subtasks || []), { id: subtask.id, description: subtask.description, completed: false }],
       }
       setTask(updatedTask)
       updateTask(updatedTask)
@@ -169,7 +179,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
         deleteTask(subtaskId)
         const updatedTask = {
           ...task,
-          subtasks: task.subtasks?.filter((id) => id !== subtaskId) || [],
+          subtasks: task.subtasks?.filter((s) => s.id !== subtaskId) || [],
         }
         setTask(updatedTask)
         updateTask(updatedTask)
@@ -179,10 +189,10 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
   )
 
   const addDependency = useCallback(() => {
-    if (task && selectedDependency && !task.dependencies.includes(selectedDependency)) {
+    if (task && selectedDependency && !(task.dependencies ?? []).includes(selectedDependency)) {
       setTask({
         ...task,
-        dependencies: [...task.dependencies, selectedDependency],
+        dependencies: [...(task.dependencies ?? []), selectedDependency],
       })
       setSelectedDependency("")
     }
@@ -193,7 +203,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
       if (task) {
         setTask({
           ...task,
-          dependencies: task.dependencies.filter((id) => id !== depId),
+          dependencies: (task.dependencies ?? []).filter((id) => id !== depId),
         })
       }
     },
@@ -204,7 +214,8 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
   const availableDependencies = allTasks.filter((t) => t.id !== taskId && !t.completed && t.parentTaskId !== taskId)
 
   // Get subtasks
-  const subtasks = allTasks.filter((t) => task?.subtasks?.includes(t.id))
+  const subtaskIds = new Set((task?.subtasks ?? []).map((s) => s.id))
+  const subtasks = allTasks.filter((t) => subtaskIds.has(t.id))
 
   if (!task) {
     return (
@@ -331,7 +342,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                       <Label htmlFor="urgency">Urgency</Label>
                       {isEditing ? (
                         <Select
-                          value={task.urgency.toString()}
+                          value={(task.urgency ?? 3).toString()}
                           onValueChange={(value) => setTask({ ...task, urgency: Number.parseInt(value) })}
                         >
                           <SelectTrigger>
@@ -348,7 +359,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                       ) : (
                         <div className="flex items-center gap-2">
                           <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                          <span>{task.urgency}/5</span>
+                          <span>{task.urgency ?? 3}/5</span>
                         </div>
                       )}
                     </div>
@@ -357,7 +368,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                       <Label htmlFor="importance">Importance</Label>
                       {isEditing ? (
                         <Select
-                          value={task.importance.toString()}
+                          value={(task.importance ?? 3).toString()}
                           onValueChange={(value) => setTask({ ...task, importance: Number.parseInt(value) })}
                         >
                           <SelectTrigger>
@@ -374,7 +385,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                       ) : (
                         <div className="flex items-center gap-2">
                           <Star className="h-4 w-4 text-muted-foreground" />
-                          <span>{task.importance}/5</span>
+                          <span>{task.importance ?? 3}/5</span>
                         </div>
                       )}
                     </div>
@@ -436,7 +447,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Categories</CardTitle>
+                  <CardTitle>Lists</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex flex-wrap gap-2">
@@ -468,10 +479,10 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
 
                   {isEditing && (
                     <div className="space-y-2">
-                      <Label>Add to Category</Label>
+                      <Label>Add to List</Label>
                       <Select onValueChange={addToCategory}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select a category" />
+                          <SelectValue placeholder="Select a list" />
                         </SelectTrigger>
                         <SelectContent>
                           {categories
@@ -659,9 +670,9 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Current Dependencies</Label>
-                {task.dependencies.length > 0 ? (
+                {(task.dependencies ?? []).length > 0 ? (
                   <div className="space-y-2">
-                    {task.dependencies.map((depId) => {
+                    {(task.dependencies ?? []).map((depId) => {
                       const depTask = allTasks.find((t) => t.id === depId)
                       return (
                         <div key={depId} className="flex justify-between items-center p-2 border rounded-md">
@@ -695,7 +706,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                       </SelectTrigger>
                       <SelectContent>
                         {availableDependencies
-                          .filter((t) => !task.dependencies.includes(t.id))
+                          .filter((t) => !(task.dependencies ?? []).includes(t.id))
                           .map((t) => (
                             <SelectItem key={t.id} value={t.id}>
                               {t.description}
@@ -835,7 +846,7 @@ export function EnhancedTaskDetail({ taskId, onBack }: EnhancedTaskDetailProps) 
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Entropy:</span>
-                    <span className="font-medium">{task.entropy.toFixed(2)}</span>
+                    <span className="font-medium">{(task.entropy ?? 0).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Reward Value:</span>

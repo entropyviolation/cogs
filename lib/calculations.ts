@@ -1,5 +1,17 @@
+/**
+ * lib/calculations.ts — Habit completion math (pure)
+ *
+ * Pure functions that compute habit-tracker percentages for all five habit types
+ * (boolean/time/count/text/incremental):
+ *  - `calculateTaskPercentage`: a habit's completion % across the week.
+ *  - `calculateDayPercentage` / `calculateDayPercentageAV`: a day's overall %
+ *    (the AV variant averages over all habits, not just those with data).
+ *
+ * Spec: §9 (Habit Tracker). Uses ISO-date-keyed `WeeklyData` (spec §9.4).
+ */
 import { type WeeklyTask as Task, TaskType, type WeeklyData } from "./types"
-import { formatDateKey } from "./date-utils"
+import { formatDateKey, formatLocalDateKey } from "./date-utils"
+import { isGoalType } from "./habit-utils"
 
 export const calculateTaskPercentage = (
   taskId: string,
@@ -11,7 +23,7 @@ export const calculateTaskPercentage = (
   if (!task) return 0
 
   // Convert dates to string keys
-  const dateKeys = weekDates.map((date) => formatDateKey(date))
+  const dateKeys = weekDates.map((date) => formatLocalDateKey(date))
 
   switch (task.type) {
     case TaskType.BOOLEAN:
@@ -31,9 +43,10 @@ export const calculateTaskPercentage = (
       return (daysCompleted / 7) * 100
     }
 
+    case TaskType.GOAL:
     case TaskType.TIME:
     case TaskType.COUNT: {
-      // For time/count: % = (total completed / (goal * 7)) * 100, capped at 100%
+      // For goal-based: % = (total completed / (goal * 7)) * 100, capped at 100%
       if (!task.goal) return 0
 
       let totalCompleted = 0
@@ -115,6 +128,7 @@ export const calculateDayPercentage = (
         }
         break
 
+      case TaskType.GOAL:
       case TaskType.TIME:
       case TaskType.COUNT:
         if (completion.value !== undefined && task.goal) {
@@ -197,6 +211,7 @@ export const calculateDayPercentageAV = (
         }
         break
 
+      case TaskType.GOAL:
       case TaskType.TIME:
       case TaskType.COUNT:
         if (completion.value !== undefined && task.goal) {

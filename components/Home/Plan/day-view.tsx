@@ -1,18 +1,27 @@
+/**
+ * components/Home/Plan/day-view.tsx — Day calendar view
+ *
+ * Hour-by-hour day grid showing time-slotted tasks and events, the planned-tasks
+ * side panel (items for this day not yet given a time), and the "Day Plan" text.
+ *
+ * Spec: §7.4 (Day View).
+ */
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { ChevronLeft, ChevronRight, Clock, Edit3, Calendar, Sparkles, MapPin } from "lucide-react"
+import { ChevronLeft, ChevronRight, Edit3, Calendar, Sparkles, MapPin } from "lucide-react"
 import { useTaskStore } from "@/lib/task-store"
 import { useEventStore } from "@/lib/event-store"
-import { formatDateKey } from "@/lib/date-utils"
 import { format, addDays, subDays } from "date-fns"
 import type { CalendarEvent } from "@/lib/types"
+import { formatLocalDateKey, sameCalendarDay, toLocalCalendarDate } from "@/lib/date-utils"
+import { getStoredPlanText, saveStoredPlanText } from "@/lib/plan-text"
 import { PlannedTasksSidebar } from "./planned-tasks-sidebar"
+import { AgendaGrid } from "./agenda-grid"
 
 interface DayViewProps {
   currentDate: Date
@@ -21,14 +30,13 @@ interface DayViewProps {
   setEvents: (events: CalendarEvent[]) => void
   onTaskClick: (taskId: string) => void
   onEventClick: (event: CalendarEvent) => void
-  onCreateEvent: (date: Date, hour?: number) => void
+  onCreateEvent: (date: Date, hour?: number, endHour?: number) => void
 }
 
 export function DayView({
   currentDate,
   setCurrentDate,
   events,
-  setEvents,
   onTaskClick,
   onEventClick,
   onCreateEvent,
@@ -36,113 +44,85 @@ export function DayView({
   const { tasks, updateTask } = useTaskStore()
   const { updateEvent } = useEventStore()
   const [dayPlan, setDayPlan] = useState("")
+  const dayKey = formatLocalDateKey(currentDate)
 
-  // Load day plan from localStorage on currentDate change
   useEffect(() => {
-    const dayKey = formatDateKey(currentDate)
-    const savedPlan = localStorage.getItem(`dayPlan-${dayKey}`)
-    if (savedPlan !== null && savedPlan !== dayPlan) {
-      setDayPlan(savedPlan)
-      console.log("savedPlan :", savedPlan)
-    } else if (savedPlan === null && dayPlan !== "") {
-      setDayPlan("")
-      console.log("savedPlan null")
-    }
-  }, [currentDate])
+    setDayPlan(getStoredPlanText("day", dayKey) ?? "")
+  }, [dayKey])
 
-  // Save day plan to localStorage whenever dayPlan or currentDate changes
-  useEffect(() => {
-    const dayKey = formatDateKey(currentDate)
-    console.log("DAYPLAN OR CURRENT DATE CHANGED \n dayPlan :", dayPlan, "\n current date :", currentDate)
-    localStorage.setItem(`dayPlan-${dayKey}`, dayPlan)
-  }, [dayPlan, currentDate])
+  const handleDayPlanChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setDayPlan(value)
+    saveStoredPlanText("day", dayKey, value)
+  }
 
   const getScheduledTasks = (date: Date) => {
     return tasks.filter((task) => {
       if (!task.scheduledDate) return false
-
-      try {
-        const taskDate = task.scheduledDate instanceof Date ? task.scheduledDate : new Date(task.scheduledDate)
-        if (isNaN(taskDate.getTime())) return false
-
-        return formatDateKey(taskDate) === formatDateKey(date)
-      } catch {
-        return false
-      }
+      return sameCalendarDay(task.scheduledDate, date)
     })
   }
 
-  const dayEvents = events.filter((event) => {
-    try {
-      const eventDate = event.date instanceof Date ? event.date : new Date(event.date)
-      if (isNaN(eventDate.getTime())) return false
-
-      return formatDateKey(eventDate) === formatDateKey(currentDate)
-    } catch {
-      return false
-    }
-  })
+  const dayEvents = events.filter((event) => sameCalendarDay(event.date, currentDate))
   const dayTasks = getScheduledTasks(currentDate)
   const allDayEvents = dayEvents.filter((event) => event.isAllDay)
-  const timedEvents = dayEvents.filter((event) => !event.isAllDay)
 
-  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
+  const handleScheduleTask = (taskId: string, hour: number, minute: number) => {
+    const task = tasks.find((t) => t.id === taskId)
+    if (!task) return
+    const scheduledDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute)
+    updateTask({
+      ...task,
+      scheduledDate,
+      scheduledTime: `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`,
+      scheduledWeek: undefined,
+      scheduledMonth: undefined,
+      scheduledYear: undefined,
+    })
   }
 
-  const onDrop = (e: React.DragEvent<HTMLDivElement>, hour: number) => {
-    const taskId = e.dataTransfer.getData("taskId")
-    const eventId = e.dataTransfer.getData("eventId")
-
-    if (taskId) {
-      const task = tasks.find((t) => t.id === taskId)
-      if (task) {
-        const scheduledDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour)
-        updateTask({ ...task, scheduledDate, scheduledTime: `${hour.toString().padStart(2, "0")}:00` })
-      }
-    } else if (eventId) {
-      const event = events.find((e) => e.id === eventId)
-      if (event && !event.isAllDay) {
-        const updatedEvent = {
-          ...event,
-          date: new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate()),
-          startTime: `${hour.toString().padStart(2, "0")}:00`,
-          endTime: `${(hour + Math.ceil(getEventDurationMinutes(event) / 60)).toString().padStart(2, "0")}:00`,
-        }
-        updateEvent(updatedEvent)
-      }
-    }
+  const handleUnscheduleTask = (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId)
+    if (!task) return
+    updateTask({ ...task, scheduledTime: undefined })
   }
 
-  const onTaskDragStart = (e: React.DragEvent<HTMLDivElement>, taskId: string) => {
-    e.dataTransfer.setData("taskId", taskId)
+  const handleRescheduleEvent = (eventId: string, hour: number, minute: number) => {
+    const event = events.find((e) => e.id === eventId)
+    if (!event || event.isAllDay) return
+    const durationMin = (() => {
+      const [sh, sm] = event.startTime.split(":").map(Number)
+      const [eh, em] = event.endTime.split(":").map(Number)
+      return eh * 60 + em - (sh * 60 + sm)
+    })()
+    const endTotal = hour * 60 + minute + durationMin
+    const endH = Math.floor(endTotal / 60)
+    const endM = endTotal % 60
+    updateEvent({
+      ...event,
+      date: toLocalCalendarDate(currentDate),
+      startTime: `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`,
+      endTime: `${endH.toString().padStart(2, "0")}:${endM.toString().padStart(2, "0")}`,
+    })
   }
 
-  const onEventDragStart = (e: React.DragEvent<HTMLDivElement>, eventId: string) => {
-    e.dataTransfer.setData("eventId", eventId)
-  }
-
-  const getEventDurationMinutes = (event: CalendarEvent): number => {
-    const [startHour, startMin] = event.startTime.split(":").map(Number)
-    const [endHour, endMin] = event.endTime.split(":").map(Number)
-    return endHour * 60 + endMin - (startHour * 60 + startMin)
-  }
-
-  const getEventHeight = (event: CalendarEvent): number => {
-    const durationMinutes = getEventDurationMinutes(event)
-    return Math.max(60, (durationMinutes / 60) * 70) // 70px per hour
-  }
-
-  const getTaskHeight = (task: any): number => {
-    return Math.max(60, (task.estimatedDuration / 60) * 70) // 70px per hour
+  const handleUnscheduleEvent = (eventId: string) => {
+    const event = events.find((e) => e.id === eventId)
+    if (!event) return
+    updateEvent({ ...event, isAllDay: true })
   }
 
   return (
     <div className="flex gap-6 h-full">
-      <PlannedTasksSidebar onTaskClick={onTaskClick} />
+      <PlannedTasksSidebar
+        mode="day"
+        currentDate={currentDate}
+        onTaskClick={onTaskClick}
+        onUnscheduleTask={handleUnscheduleTask}
+        onUnscheduleEvent={handleUnscheduleEvent}
+      />
 
       <div className="space-y-6 flex-1">
-        {/* Day navigation */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button
@@ -173,7 +153,6 @@ export function DayView({
           </Button>
         </div>
 
-        {/* All-day events banner */}
         {allDayEvents.length > 0 && (
           <Card className="shadow-lg border-0 bg-gradient-to-r from-purple-100 to-blue-100">
             <CardContent className="p-4">
@@ -202,7 +181,6 @@ export function DayView({
           </Card>
         )}
 
-        {/* Schedule */}
         <Card className="shadow-xl border-0 bg-white/80 backdrop-blur-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-slate-700">
@@ -211,87 +189,22 @@ export function DayView({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-1 max-h-96 overflow-y-auto">
-              {Array.from({ length: 24 }, (_, hour) => (
-                <div
-                  key={hour}
-                  className="flex border-b border-slate-100 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 transition-all duration-200 rounded-lg"
-                >
-                  <div className="w-20 text-sm text-slate-500 p-4 border-r border-slate-100 font-medium">
-                    {hour.toString().padStart(2, "0")}:00
-                  </div>
-                  <div
-                    className="flex-1 min-h-[70px] relative cursor-pointer p-2"
-                    onDragOver={onDragOver}
-                    onDrop={(e) => onDrop(e, hour)}
-                    onClick={() => onCreateEvent(currentDate, hour)}
-                  >
-                    {/* Events */}
-                    {timedEvents
-                      .filter((event) => Number.parseInt(event.startTime.split(":")[0]) === hour)
-                      .map((event) => (
-                        <div
-                          key={event.id}
-                          className="absolute inset-2 rounded-lg text-sm text-white p-3 cursor-pointer shadow-lg hover:shadow-xl transition-shadow"
-                          style={{
-                            backgroundColor: event.color,
-                            height: `${getEventHeight(event)}px`,
-                          }}
-                          draggable
-                          onDragStart={(e) => onEventDragStart(e, event.id)}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onEventClick(event)
-                          }}
-                        >
-                          <div className="font-semibold truncate">{event.title}</div>
-                          <div className="opacity-90 text-xs">
-                            {event.startTime} - {event.endTime}
-                          </div>
-                          {event.location && (
-                            <div className="opacity-80 text-xs flex items-center gap-1 mt-1">
-                              <MapPin className="h-3 w-3" />
-                              {event.location}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                    {/* Tasks */}
-                    {dayTasks
-                      .filter(
-                        (task) => task.scheduledTime && Number.parseInt(task.scheduledTime.split(":")[0]) === hour,
-                      )
-                      .map((task) => (
-                        <div
-                          key={task.id}
-                          className="absolute inset-2 rounded-lg text-sm bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-800 p-3 cursor-pointer border border-emerald-200 shadow-lg hover:shadow-xl transition-shadow"
-                          style={{
-                            height: `${getTaskHeight(task)}px`,
-                            top: `${timedEvents.filter((e) => Number.parseInt(e.startTime.split(":")[0]) === hour).length * 80 + 8}px`,
-                          }}
-                          draggable
-                          onDragStart={(e) => onTaskDragStart(e, task.id)}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onTaskClick(task.id)
-                          }}
-                        >
-                          <div className="font-semibold truncate flex items-center">
-                            <Clock className="h-4 w-4 mr-2" />
-                            {task.description}
-                          </div>
-                          <div className="opacity-75 text-xs mt-1">{task.estimatedDuration}m</div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <AgendaGrid
+              date={currentDate}
+              events={events}
+              tasks={dayTasks}
+              mode="plan"
+              maxHeight="max-h-[600px]"
+              onTaskClick={onTaskClick}
+              onEventClick={onEventClick}
+              onCreateEvent={onCreateEvent}
+              onScheduleTask={handleScheduleTask}
+              onRescheduleEvent={handleRescheduleEvent}
+              showCurrentTimeIndicator
+            />
           </CardContent>
         </Card>
 
-        {/* Day plan text */}
         <Card className="shadow-xl border-0 bg-white/80 backdrop-blur-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-slate-700">
@@ -303,7 +216,7 @@ export function DayView({
             <Textarea
               placeholder="Write your day plan, goals, and objectives..."
               value={dayPlan}
-              onChange={(e) => setDayPlan(e.target.value)}
+              onChange={handleDayPlanChange}
               rows={6}
               className="resize-none border-slate-200 focus:border-blue-300 focus:ring-blue-200 bg-white/50"
             />

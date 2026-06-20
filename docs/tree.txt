@@ -1,0 +1,189 @@
+.
+├── README.md
+├── app
+│   ├── README.md
+│   ├── globals.css
+│   ├── layout.tsx
+│   ├── loading.tsx
+│   ├── page.tsx
+│   └── win95.css
+├── components
+│   ├── Analytics
+│   │   ├── README.md
+│   │   └── enhanced-analytics.tsx
+│   ├── Home
+│   │   ├── Goals
+│   │   │   ├── README.md
+│   │   │   └── goals-tracker.tsx
+│   │   ├── Habits
+│   │   │   ├── README.md
+│   │   │   ├── daily-task-form-dialog.tsx
+│   │   │   ├── daily-task-form.tsx
+│   │   │   ├── habit-tracker.tsx
+│   │   │   ├── period-habit-list.tsx
+│   │   │   ├── settings-dialog.tsx
+│   │   │   ├── task-grid.tsx
+│   │   │   └── week-navigation.tsx
+│   │   ├── Plan
+│   │   │   ├── README.md
+│   │   │   ├── agenda-grid.tsx
+│   │   │   ├── day-view.tsx
+│   │   │   ├── event-dialog.tsx
+│   │   │   ├── month-view.tsx
+│   │   │   ├── plan-panel.tsx
+│   │   │   ├── planned-tasks-sidebar.tsx
+│   │   │   ├── settings-dialog.tsx
+│   │   │   └── week-view.tsx
+│   │   ├── README.md
+│   │   ├── ToDo
+│   │   │   ├── README.md
+│   │   │   └── todo-panel.tsx
+│   │   ├── Tracking
+│   │   │   ├── README.md
+│   │   │   ├── actual-day-view.tsx
+│   │   │   └── time-grid.tsx
+│   │   ├── daily-progress-quickview.tsx
+│   │   ├── home-dashboard.test.tsx
+│   │   ├── home-dashboard.tsx
+│   │   └── points-stats.tsx
+│   ├── Lists
+│   │   ├── README.md
+│   │   ├── attribute-editor.tsx
+│   │   ├── daily-habits-list.tsx
+│   │   ├── enhanced-category-view.tsx
+│   │   ├── filemanager98.css
+│   │   ├── list-picker.tsx
+│   │   └── settings-dialog.tsx
+│   ├── Modules
+│   │   ├── README.md
+│   │   └── modules-panel.tsx
+│   ├── README.md
+│   ├── Reviews
+│   │   ├── README.md
+│   │   └── reviews.tsx
+│   ├── Scheduler
+│   │   ├── README.md
+│   │   └── enhanced-scheduler.tsx
+│   ├── Untitled-1.py
+│   ├── cognitive-state.tsx
+│   ├── enhanced-bulk-add.tsx
+│   ├── enhanced-task-detail.tsx
+│   ├── inbox.tsx
+│   ├── quick-add.tsx
+│   ├── task-detail-popup.tsx
+│   └── ui
+│       ├── README.md
+│       ├── alert.tsx
+│       ├── badge.tsx
+│       ├── button.tsx
+│       ├── card.tsx
+│       ├── checkbox.tsx
+│       ├── collapsible.tsx
+│       ├── dialog.tsx
+│       ├── dropdown-menu.tsx
+│       ├── input.tsx
+│       ├── label.tsx
+│       ├── progress.tsx
+│       ├── select.tsx
+│       ├── separator.tsx
+│       ├── switch.tsx
+│       ├── table.tsx
+│       ├── tabs.tsx
+│       ├── textarea.tsx
+│       └── tooltip.tsx
+├── components.json
+├── docs
+│   ├── README.md
+│   ├── SPEC_MAPPING.md
+│   ├── screenshots
+│   │   ├── 01-home-daily-habits.png
+│   │   ├── 01-home-daily-habits.txt
+│   │   ├── 02-home-plan.png
+│   │   ├── 02-home-plan.txt
+│   │   ├── 03-home-todo.png
+│   │   ├── 03-home-todo.txt
+│   │   ├── 04-home-goals.png
+│   │   ├── 04-home-goals.txt
+│   │   ├── 05-lists.png
+│   │   ├── 05-lists.txt
+│   │   ├── 06-scheduler.png
+│   │   ├── 06-scheduler.txt
+│   │   ├── 07-analytics.png
+│   │   ├── 07-analytics.txt
+│   │   ├── 08-home-tracking.png
+│   │   ├── 08-home-tracking.txt
+│   │   ├── 09-modules.png
+│   │   └── 09-modules.txt
+│   └── tree.txt
+├── electron
+│   ├── README.md
+│   ├── main.js
+│   └── preload.js
+├── hooks
+│   └── README.md
+├── lib
+│   ├── README.md
+│   ├── attribute-utils.ts
+│   ├── calculations.ts
+│   ├── csv.ts
+│   ├── date-utils.ts
+│   ├── event-store.ts
+│   ├── folder-all-items.ts
+│   ├── goals-store.ts
+│   ├── habit-utils.ts
+│   ├── habits-store.ts
+│   ├── item-utils.ts
+│   ├── lists-ui-store.ts
+│   ├── modules-store.ts
+│   ├── orbs-manifest.ts
+│   ├── plan-text.ts
+│   ├── points-store.ts
+│   ├── remove-background.ts
+│   ├── reviews-store.ts
+│   ├── scheduled-lists-sync.ts
+│   ├── task-store.ts
+│   ├── theme-store.ts
+│   ├── time-tracking-store.ts
+│   ├── types.ts
+│   └── utils.ts
+├── next-env.d.ts
+├── next.config.mjs
+├── package-lock.json
+├── package.json
+├── pnpm-lock.yaml
+├── postcss.config.mjs
+├── public
+│   ├── fonts
+│   │   ├── W95FA.otf
+│   │   ├── converted
+│   │   │   ├── ms_sans_serif.woff
+│   │   │   ├── ms_sans_serif.woff2
+│   │   │   ├── ms_sans_serif_bold.woff
+│   │   │   └── ms_sans_serif_bold.woff2
+│   │   └── w95fa.woff
+│   ├── icons
+│   │   ├── briefcase.ico
+│   │   ├── folder.ico
+│   │   ├── list.ico
+│   │   ├── minimize.svg
+│   │   └── parentfolder.ico
+│   ├── linkconnectors
+│   │   ├── default.svg
+│   │   ├── defaultselected.svg
+│   │   ├── last.svg
+│   │   └── lastselected.svg
+│   ├── orbs-removebackground
+│   │   ├── 00122e5fb5c048f8ecdf43d83357c361.png
+│   │   ├── ......... {hundreds more orb photos}
+│   │   ├── ff9125178904b8fdf46ca3792f9f2dca.png
+│   │   └── orb.png
+│   └── velvetscrolltile.png
+├── scripts
+│   └── capture-screenshots.mjs
+├── tailwind.config.ts
+├── tsconfig.json
+├── tsconfig.tsbuildinfo
+├── vitest.config.ts
+└── vitest.setup.ts
+
+

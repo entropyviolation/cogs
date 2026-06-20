@@ -1,6 +1,15 @@
+/**
+ * components/Home/Plan/plan-panel.tsx — Plan panel container
+ *
+ * The calendar/plan side of the Scheduler embedded in the Home dashboard. Hosts
+ * the Month/Week/Day view tabs, the Add Event and Settings actions, and wires the
+ * event dialog and task detail popup to the active view.
+ *
+ * Spec: §7.4 (calendar views), §8.5 (Plan panel).
+ */
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TaskDetailPopup } from "@/components/task-detail-popup"
 import { Button } from "@/components/ui/button"
@@ -13,8 +22,16 @@ import { EventDialog } from "./event-dialog"
 import { useEventStore } from "@/lib/event-store"
 import { SettingsDialog } from "./settings-dialog"
 
-export function PlanPanel() {
-  const [currentDate, setCurrentDate] = useState(new Date())
+export function PlanPanel({
+  currentDate: controlledDate,
+  setCurrentDate: setControlledDate,
+}: {
+  currentDate?: Date
+  setCurrentDate?: (date: Date) => void
+} = {}) {
+  const [internalDate, setInternalDate] = useState(new Date())
+  const currentDate = controlledDate ?? internalDate
+  const setCurrentDate = setControlledDate ?? setInternalDate
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const { events, addEvent, updateEvent, deleteEvent } = useEventStore()
   const [showEventDialog, setShowEventDialog] = useState(false)
@@ -23,7 +40,7 @@ export function PlanPanel() {
     title: "",
     startTime: "09:00",
     endTime: "10:00",
-    type: "event" as const,
+    type: "event" as CalendarEvent["type"],
     date: currentDate,
     endDate: undefined as Date | undefined,
     isAllDay: false,
@@ -33,32 +50,26 @@ export function PlanPanel() {
 
   const [showSettingsDialog, setShowSettingsDialog] = useState(false)
 
-  const handleCreateEvent = (date: Date, hour?: number) => {
-    if (hour !== undefined) {
-      setNewEvent({
-        title: "",
-        startTime: `${hour.toString().padStart(2, "0")}:00`,
-        endTime: `${(hour + 1).toString().padStart(2, "0")}:00`,
-        type: "event",
-        date: date,
-        endDate: undefined,
-        isAllDay: false,
-        location: "",
-        description: "",
-      })
-    } else {
-      setNewEvent({
-        title: "",
-        startTime: "09:00",
-        endTime: "10:00",
-        type: "event",
-        date: date,
-        endDate: undefined,
-        isAllDay: false,
-        location: "",
-        description: "",
-      })
-    }
+  useEffect(() => {
+    setNewEvent((prev) => ({ ...prev, date: currentDate }))
+  }, [currentDate])
+
+  const handleCreateEvent = (date: Date, hour?: number, endHour?: number) => {
+    const startH = hour ?? 9
+    const endH = endHour !== undefined ? endHour + 1 : startH + 1
+    const lo = Math.min(startH, endHour ?? startH)
+    const hi = Math.max(startH, endHour ?? startH)
+    setNewEvent({
+      title: "",
+      startTime: `${lo.toString().padStart(2, "0")}:00`,
+      endTime: `${(hi + 1).toString().padStart(2, "0")}:00`,
+      type: "event",
+      date: date,
+      endDate: undefined,
+      isAllDay: false,
+      location: "",
+      description: "",
+    })
     setEditingEvent(null)
     setShowEventDialog(true)
   }

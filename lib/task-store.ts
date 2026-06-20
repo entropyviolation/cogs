@@ -1,8 +1,25 @@
+/**
+ * lib/task-store.ts — Tasks, categories & folders store
+ *
+ * The central Zustand store and source of truth for tasks, their categories, and
+ * category folders. Powers the Inbox, Next Actions board, Scheduler funnel, and
+ * the Home dashboard's To-Do/Plan panels. Persisted to localStorage under
+ * `cogs-task-storage` with Date-aware (de)serialization and a versioned
+ * migration hook. Also exposes the configurable priority formula and
+ * `calculatePriorityScore`.
+ *
+ * Spec: §4 (Inbox), §5 (Item model), §6 (Next Actions), §7 (Scheduler). Storage
+ * is localStorage today; spec §3 calls for migrating this to SQLite with one-click
+ * JSON export/import (see docs/SPEC_MAPPING.md §3).
+ */
 "use client"
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { persist, createJSONStorage } from "zustand/middleware"
 import type { Task, TaskCategory, CategoryFolder } from "@/lib/types"
+import { migratePersistedAttributes } from "@/lib/attribute-utils"
+import { usePointsStore } from "@/lib/points-store"
+import { resolveCompletionPoints } from "@/lib/item-utils"
 
 interface TaskState {
   tasks: Task[]
@@ -25,6 +42,8 @@ interface TaskState {
   setCategories: (categories: TaskCategory[]) => void
   clearAllData: () => void
   addFolder: (folder: CategoryFolder) => void
+  dedupeFolders: () => void
+  dedupeCategories: () => void
   updateFolder: (folder: CategoryFolder) => void
   deleteFolder: (id: string) => void
   addCategoryToFolder: (folderId: string, categoryId: string) => void
@@ -36,11 +55,12 @@ interface TaskState {
 const initialCategories: TaskCategory[] = [
   {
     id: "example",
-    name: "Example Category",
+    name: "Example List",
     color: "#EF4444",
-    description: "An example category for demonstration purposes",
+    description: "An example list for demonstration purposes",
     createdAt: new Date(),
     order: 0,
+    scheduleable: true,
   },
 ]
 
@@ -109,6 +129,18 @@ export const useTaskStore = create<TaskState>()(
         set((state) => {
           const index = state.tasks.findIndex((t) => t.id === updatedTask.id)
           if (index !== -1) {
+            // Award points when a task transitions to completed (regardless of
+            // which screen completed it). Guarded so re-saving a completed task
+            // doesn't double-award.
+            const prev = state.tasks[index]
+            if (!prev.completed && updatedTask.completed) {
+              const points = resolveCompletionPoints(updatedTask, state.categories, state.folders)
+              if (points > 0) {
+                usePointsStore
+                  .getState()
+                  .addPoints(updatedTask.id, points, updatedTask.description || "Task", new Date())
+              }
+            }
             // Ensure dates are proper Date objects
             const taskWithDates = {
               ...updatedTask,
@@ -143,9 +175,10 @@ export const useTaskStore = create<TaskState>()(
         })),
 
       addCategory: (category) =>
-        set((state) => ({
-          categories: [...state.categories, category],
-        })),
+        set((state) => {
+          if (state.categories.some((c) => c.id === category.id)) return state
+          return { categories: [...state.categories, category] }
+        }),
 
       updateCategory: (updatedCategory) =>
         set((state) => {
@@ -166,7 +199,41 @@ export const useTaskStore = create<TaskState>()(
       setTasks: (tasks) => set(() => ({ tasks })),
       setCategories: (categories) => set(() => ({ categories })),
       clearAllData: () => set(() => ({ tasks: [], categories: [], folders: [] })),
-      addFolder: (folder) => set((state) => ({ folders: [...state.folders, folder] })),
+      addFolder: (folder) =>
+        set((state) => {
+          if (state.folders.some((f) => f.id === folder.id)) return state
+          return { folders: [...state.folders, folder] }
+        }),
+      dedupeFolders: () =>
+        set((state) => {
+          const seen = new Set<string>()
+          const deduped = state.folders.filter((f) => {
+            if (seen.has(f.id)) return false
+            seen.add(f.id)
+            return true
+          })
+          return deduped.length === state.folders.length ? state : { folders: deduped }
+        }),
+      dedupeCategories: () =>
+        set((state) => {
+          const seen = new Set<string>()
+          const dedupedCategories = state.categories.filter((c) => {
+            if (seen.has(c.id)) return false
+            seen.add(c.id)
+            return true
+          })
+          const dedupedFolders = state.folders.map((f) => ({
+            ...f,
+            categoryIds: [...new Set(f.categoryIds)],
+          }))
+          const categoriesChanged = dedupedCategories.length !== state.categories.length
+          const foldersChanged = dedupedFolders.some(
+            (f, i) => f.categoryIds.length !== state.folders[i]?.categoryIds.length,
+          )
+          return categoriesChanged || foldersChanged
+            ? { categories: dedupedCategories, folders: dedupedFolders }
+            : state
+        }),
       updateFolder: (folder) => set((state) => {
         const index = state.folders.findIndex((f) => f.id === folder.id)
         if (index !== -1) {
@@ -197,25 +264,22 @@ export const useTaskStore = create<TaskState>()(
     }),
     {
       name: "cogs-task-storage", // unique name for localStorage key
-      // Custom serialization to handle Date objects
-      serialize: (state) => {
-        return JSON.stringify(state, (key, value) => {
+      storage: createJSONStorage(() => localStorage, {
+        replacer: (_key, value) => {
           if (value instanceof Date) {
             return { __type: "Date", value: value.toISOString() }
           }
           return value
-        })
-      },
-      deserialize: (str) => {
-        return JSON.parse(str, (key, value) => {
-          if (value && typeof value === "object" && value.__type === "Date") {
-            return new Date(value.value)
+        },
+        reviver: (_key, value) => {
+          if (value && typeof value === "object" && (value as { __type?: string }).__type === "Date") {
+            return new Date((value as { value: string }).value)
           }
           return value
-        })
-      },
+        },
+      }),
       // Add version to handle schema changes
-      version: 3,
+      version: 6,
       // Migrate function to handle old data
       migrate: (persistedState: any, version: number) => {
         if (version < 2) {
@@ -249,6 +313,42 @@ export const useTaskStore = create<TaskState>()(
             persistedState.folders = []
           }
         }
+        if (version < 4) {
+          // Lists (categories) default to scheduleable so existing items keep
+          // appearing in the Scheduler.
+          if (persistedState.categories) {
+            persistedState.categories = persistedState.categories.map((category: any) => ({
+              ...category,
+              scheduleable: category.scheduleable !== undefined ? category.scheduleable : true,
+            }))
+          }
+          // Folders gain default settings inherited by lists created inside them.
+          if (persistedState.folders) {
+            persistedState.folders = persistedState.folders.map((folder: any) => ({
+              ...folder,
+              scheduleable: folder.scheduleable !== undefined ? folder.scheduleable : true,
+            }))
+          }
+        }
+        if (version < 5) {
+          persistedState = migratePersistedAttributes(persistedState)
+        }
+        if (version < 6) {
+          const seen = new Set<string>()
+          if (persistedState.categories) {
+            persistedState.categories = persistedState.categories.filter((c: TaskCategory) => {
+              if (seen.has(c.id)) return false
+              seen.add(c.id)
+              return true
+            })
+          }
+          if (persistedState.folders) {
+            persistedState.folders = persistedState.folders.map((f: CategoryFolder) => ({
+              ...f,
+              categoryIds: [...new Set(f.categoryIds)],
+            }))
+          }
+        }
         return persistedState
       },
     },
@@ -262,7 +362,11 @@ export const useTaskSelector = <T,>(selector: (state: TaskState) => T): T => {
 
 // Helper function to calculate priority score
 export const calculatePriorityScore = (task: Task, formula = useTaskStore.getState().priorityFormula) => {
-  const numerator = task.urgency * formula.urgencyWeight + task.importance * formula.importanceWeight
-  const denominator = task.estimatedDuration * formula.effortWeight + task.cognitiveLoad * formula.cognitiveLoadWeight
-  return numerator / Math.max(denominator, 0.1) // Avoid division by zero
+  const duration = task.estimatedDuration ?? 30
+  const cognitive = task.cognitiveLoad ?? 2
+  const urgency = task.urgency ?? 3
+  const importance = task.importance ?? 3
+  const numerator = urgency * formula.urgencyWeight + importance * formula.importanceWeight
+  const denominator = duration * formula.effortWeight + cognitive * formula.cognitiveLoadWeight
+  return numerator / Math.max(denominator, 0.1)
 }

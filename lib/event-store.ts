@@ -1,8 +1,19 @@
+/**
+ * lib/event-store.ts — Calendar events store
+ *
+ * Zustand store for calendar `CalendarEvent`s shown in the Plan/Scheduler views.
+ * CRUD + bulk `setEvents`, persisted to localStorage under `cogs-event-storage`
+ * with Date-aware serialization. Seeded with two demo events on first run.
+ *
+ * Spec: §7.5 (Events). The spec's "event with a linked checklist" (via the
+ * generic links field) is not modeled here yet — see docs/SPEC_MAPPING.md §7.
+ */
 "use client"
 
 import { create } from "zustand"
-import { persist } from "zustand/middleware"
+import { persist, createJSONStorage } from "zustand/middleware"
 import type { CalendarEvent } from "./types"
+import { toLocalCalendarDate } from "./date-utils"
 
 interface EventState {
   events: CalendarEvent[]
@@ -49,12 +60,8 @@ export const useEventStore = create<EventState>()(
           if (!state.events.some((e) => e.id === event.id)) {
             const eventWithDates = {
               ...event,
-              date: event.date instanceof Date ? event.date : new Date(event.date),
-              endDate: event.endDate
-                ? event.endDate instanceof Date
-                  ? event.endDate
-                  : new Date(event.endDate)
-                : undefined,
+              date: toLocalCalendarDate(event.date),
+              endDate: event.endDate ? toLocalCalendarDate(event.endDate) : undefined,
             }
             return { events: [...state.events, eventWithDates] }
           }
@@ -67,12 +74,8 @@ export const useEventStore = create<EventState>()(
           if (index !== -1) {
             const eventWithDates = {
               ...updatedEvent,
-              date: updatedEvent.date instanceof Date ? updatedEvent.date : new Date(updatedEvent.date),
-              endDate: updatedEvent.endDate
-                ? updatedEvent.endDate instanceof Date
-                  ? updatedEvent.endDate
-                  : new Date(updatedEvent.endDate)
-                : undefined,
+              date: toLocalCalendarDate(updatedEvent.date),
+              endDate: updatedEvent.endDate ? toLocalCalendarDate(updatedEvent.endDate) : undefined,
             }
             const newEvents = [...state.events]
             newEvents[index] = eventWithDates
@@ -90,22 +93,20 @@ export const useEventStore = create<EventState>()(
     }),
     {
       name: "cogs-event-storage",
-      serialize: (state) => {
-        return JSON.stringify(state, (key, value) => {
+      storage: createJSONStorage(() => localStorage, {
+        replacer: (_key, value) => {
           if (value instanceof Date) {
             return { __type: "Date", value: value.toISOString() }
           }
           return value
-        })
-      },
-      deserialize: (str) => {
-        return JSON.parse(str, (key, value) => {
-          if (value && typeof value === "object" && value.__type === "Date") {
-            return new Date(value.value)
+        },
+        reviver: (_key, value) => {
+          if (value && typeof value === "object" && (value as { __type?: string }).__type === "Date") {
+            return new Date((value as { value: string }).value)
           }
           return value
-        })
-      },
+        },
+      }),
       version: 1,
     },
   ),

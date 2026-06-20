@@ -1,22 +1,70 @@
+/**
+ * components/Home/home-dashboard.tsx — Home dashboard container
+ *
+ * "The epicenter": the screen opened first each session. Renders the date card,
+ * today's progress quickview, the Points Stats grid, review banner, and the five
+ * sub-tabs (Habits / Plan / To Do / Goals / Tracking), mounting the matching sub-view.
+ *
+ * Spec: §8 (Home Dashboard).
+ */
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Calendar, Target, Plus, Clock, TrendingUp, Star } from "lucide-react"
+import { Calendar, Clock } from "lucide-react"
 import { WeeklyTaskTracker } from "@/components/Home/Habits/habit-tracker"
 import { PlanPanel } from "@/components/Home/Plan/plan-panel"
 import { TodoPanel } from "@/components/Home/ToDo/todo-panel"
 import { GoalsTracker } from "@/components/Home/Goals/goals-tracker"
 import { PointsStats } from "@/components/Home/points-stats"
+import { DailyProgressQuickview } from "@/components/Home/daily-progress-quickview"
+import { HomeReviewBanner } from "@/components/Home/home-review-banner"
+import { TimeGrid } from "@/components/Home/Tracking/time-grid"
+import { ActualDayView } from "@/components/Home/Tracking/actual-day-view"
+import { useCurrentDate } from "@/lib/use-current-date"
 import { format } from "date-fns"
+import type { ReviewPeriod } from "@/lib/types"
+
+const HOME_TAB_KEY = "cogs-home-tab"
+const HOME_TRACKING_TAB_KEY = "cogs-home-tracking-tab"
+
+type HomeTab = "habits" | "plan" | "todo" | "goals" | "tracking"
+type TrackingTab = "grid" | "daylog"
+
+const HOME_TABS: HomeTab[] = ["habits", "plan", "todo", "goals", "tracking"]
+const TRACKING_TABS: TrackingTab[] = ["grid", "daylog"]
+
+function readStoredTab<T extends string>(key: string, allowed: T[], fallback: T): T {
+  if (typeof window === "undefined") return fallback
+  const stored = localStorage.getItem(key)
+  return stored && allowed.includes(stored as T) ? (stored as T) : fallback
+}
 
 export function HomeDashboard() {
-  const [currentDate] = useState(new Date())
+  const { currentDate, setCurrentDate } = useCurrentDate()
+  const [activeTab, setActiveTab] = useState<HomeTab>(() => readStoredTab(HOME_TAB_KEY, HOME_TABS, "habits"))
+  const [trackingTab, setTrackingTab] = useState<TrackingTab>(() =>
+    readStoredTab(HOME_TRACKING_TAB_KEY, TRACKING_TABS, "grid"),
+  )
+
+  useEffect(() => {
+    localStorage.setItem(HOME_TAB_KEY, activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    localStorage.setItem(HOME_TRACKING_TAB_KEY, trackingTab)
+  }, [trackingTab])
+
+  const handleStartReview = useCallback((_period: ReviewPeriod, _periodKey: string) => {
+    // Header Reviews dropdown owns the full dialog; banner nudges the user there.
+    document.querySelector<HTMLButtonElement>('[data-home-review-entry]')?.click()
+  }, [])
 
   return (
     <div className="space-y-6">
+      <HomeReviewBanner currentDate={currentDate} onStartReview={handleStartReview} />
+
       {/* Header with date and points stats */}
       <div className="flex flex-col lg:flex-row gap-6">
         <Card className="flex-1 card-hover">
@@ -34,50 +82,25 @@ export function HomeDashboard() {
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
-        <Card className="lg:w-80 card-hover">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2">
-              <Target className="h-5 w-5" />
-              Quick Actions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Button className="w-full justify-start" variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Task
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <Clock className="h-4 w-4 mr-2" />
-              Plan Day
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <Star className="h-4 w-4 mr-2" />
-              Set Goal
-            </Button>
-            <Button className="w-full justify-start" variant="outline">
-              <TrendingUp className="h-4 w-4 mr-2" />
-              Review Progress
-            </Button>
-          </CardContent>
-        </Card>
+        <DailyProgressQuickview currentDate={currentDate} />
       </div>
 
       {/* Main dashboard tabs */}
-      <Tabs defaultValue="habits" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="habits">Daily Habits</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as HomeTab)} className="w-full">
+        <TabsList className="grid w-full grid-cols-5">
+          <TabsTrigger value="habits">Habits</TabsTrigger>
           <TabsTrigger value="plan">Plan</TabsTrigger>
           <TabsTrigger value="todo">To Do</TabsTrigger>
           <TabsTrigger value="goals">Goals</TabsTrigger>
+          <TabsTrigger value="tracking">Tracking</TabsTrigger>
         </TabsList>
 
         <TabsContent value="habits" className="mt-6">
-          <WeeklyTaskTracker />
+          <WeeklyTaskTracker currentDate={currentDate} />
         </TabsContent>
 
         <TabsContent value="plan" className="mt-6">
-          <PlanPanel />
+          <PlanPanel currentDate={currentDate} setCurrentDate={setCurrentDate} />
         </TabsContent>
 
         <TabsContent value="todo" className="mt-6">
@@ -88,7 +111,40 @@ export function HomeDashboard() {
           <GoalsTracker />
         </TabsContent>
 
-
+        <TabsContent value="tracking" className="mt-6 space-y-4">
+          <Tabs value={trackingTab} onValueChange={(v) => setTrackingTab(v as TrackingTab)}>
+            <TabsList>
+              <TabsTrigger value="grid">Time Grid</TabsTrigger>
+              <TabsTrigger value="daylog">Day Log</TabsTrigger>
+            </TabsList>
+            <TabsContent value="grid" className="mt-4">
+              <Card className="card-hover">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5" />
+                    Time Tracking
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TimeGrid />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="daylog" className="mt-4">
+              <Card className="card-hover">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5" />
+                    Actual Day Plan
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ActualDayView currentDate={currentDate} setCurrentDate={setCurrentDate} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+        </TabsContent>
       </Tabs>
     </div>
   )
