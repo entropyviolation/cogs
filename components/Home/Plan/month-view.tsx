@@ -1,3 +1,13 @@
+/**
+ * components/Home/Plan/month-view.tsx — Month calendar view
+ *
+ * Month grid with event/task chips per day, drag-and-drop to (re)schedule onto a
+ * date, the Planned Tasks sidebar, and the persisted "Month Plan" textarea.
+ *
+ * Spec: §7.4 (Month View). NOTE: Month Plan currently persists to localStorage
+ * (`monthPlan-YYYY-MM`); spec §7.4 wants a DB-backed `MonthPlan` with debounced
+ * auto-save — see docs/SPEC_MAPPING.md §7.
+ */
 "use client"
 
 import type React from "react"
@@ -9,7 +19,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { ChevronLeft, ChevronRight, Clock, Edit3, Sparkles, MapPin, Calendar } from "lucide-react"
 import { useTaskStore } from "@/lib/task-store"
 import { useEventStore } from "@/lib/event-store"
-import { formatDateKey } from "@/lib/date-utils"
+import { formatLocalDateKey, sameCalendarDay, toLocalCalendarDate } from "@/lib/date-utils"
+import { getStoredPlanText, saveStoredPlanText } from "@/lib/plan-text"
 import {
   format,
   addMonths,
@@ -21,7 +32,7 @@ import {
   isToday,
   addDays,
 } from "date-fns"
-import type { CalendarEvent } from "../types"
+import type { CalendarEvent } from "@/lib/types"
 import { PlannedTasksSidebar } from "./planned-tasks-sidebar"
 
 interface MonthViewProps {
@@ -46,50 +57,24 @@ export function MonthView({
   const { tasks, updateTask } = useTaskStore()
   const { updateEvent } = useEventStore()
   const [monthPlan, setMonthPlan] = useState("")
+  const monthKey = format(currentDate, "yyyy-MM")
 
-  // Load month plan from localStorage
   useEffect(() => {
-    const monthKey = format(currentDate, "yyyy-MM")
-    const savedPlan = localStorage.getItem(`monthPlan-${monthKey}`)
-    if (savedPlan !== null && savedPlan !== monthPlan) {
-      setMonthPlan(savedPlan)
-    } else if (savedPlan === null && monthPlan !== "") {
-      setMonthPlan("")
-    }
-  }, [currentDate])
+    setMonthPlan(getStoredPlanText("month", monthKey) ?? "")
+  }, [monthKey])
 
-  // Save month plan to localStorage
-  useEffect(() => {
-    const monthKey = format(currentDate, "yyyy-MM")
-    localStorage.setItem(`monthPlan-${monthKey}`, monthPlan)
-  }, [monthPlan, currentDate])
+  const handleMonthPlanChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setMonthPlan(value)
+    saveStoredPlanText("month", monthKey, value)
+  }
 
   const getScheduledTasks = (date: Date) => {
-    return tasks.filter((task) => {
-      if (!task.scheduledDate) return false
-
-      try {
-        const taskDate = task.scheduledDate instanceof Date ? task.scheduledDate : new Date(task.scheduledDate)
-        if (isNaN(taskDate.getTime())) return false
-
-        return formatDateKey(taskDate) === formatDateKey(date)
-      } catch {
-        return false
-      }
-    })
+    return tasks.filter((task) => task.scheduledDate && sameCalendarDay(task.scheduledDate, date))
   }
 
   const getEventsForDate = (date: Date) => {
-    return events.filter((event) => {
-      try {
-        const eventDate = event.date instanceof Date ? event.date : new Date(event.date)
-        if (isNaN(eventDate.getTime())) return false
-
-        return formatDateKey(eventDate) === formatDateKey(date)
-      } catch {
-        return false
-      }
-    })
+    return events.filter((event) => sameCalendarDay(event.date, date))
   }
 
   const monthStart = startOfMonth(currentDate)
@@ -109,19 +94,19 @@ export function MonthView({
     if (taskId) {
       const task = tasks.find((t) => t.id === taskId)
       if (task) {
-        updateTask({ ...task, scheduledDate: date })
+        updateTask({ ...task, scheduledDate: toLocalCalendarDate(date) })
       }
     } else if (eventId) {
       const event = events.find((e) => e.id === eventId)
       if (event) {
-        updateEvent({ ...event, date })
+        updateEvent({ ...event, date: toLocalCalendarDate(date) })
       }
     }
   }
 
   return (
     <div className="flex gap-6 h-full bg-gradient-to-br from-gray-900 via-black to-gray-800 min-h-screen">
-      <PlannedTasksSidebar onTaskClick={onTaskClick} />
+      <PlannedTasksSidebar mode="month" currentDate={currentDate} onTaskClick={onTaskClick} />
 
       <div className="flex-1 space-y-6">
         {/* Month navigation */}
@@ -264,7 +249,7 @@ export function MonthView({
             <Textarea
               placeholder="Write your month plan, goals, and objectives..."
               value={monthPlan}
-              onChange={(e) => setMonthPlan(e.target.value)}
+              onChange={handleMonthPlanChange}
               rows={6}
               className="resize-none bg-gray-800/50 border-gray-600 text-white placeholder-gray-400 focus:border-[#8cd4a5] focus:ring-[#8cd4a5]/20 transition-all duration-300"
             />

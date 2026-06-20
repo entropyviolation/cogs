@@ -1,3 +1,10 @@
+/**
+ * components/enhanced-bulk-add.tsx — Bulk Add capture
+ *
+ * Multi-line capture using the v1 line-based syntax: a line ending in ":" starts
+ * a new category block; following lines become items in that category; unknown
+ * categories are auto-created. Items go directly into their lists (not Inbox).
+ */
 "use client"
 
 import type React from "react"
@@ -15,6 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useTaskStore } from "@/lib/task-store"
+import { createListItem, withCategoryDefaults } from "@/lib/item-utils"
 import type { TaskCategory } from "@/lib/types"
 
 export function EnhancedBulkAdd() {
@@ -34,88 +42,50 @@ export function EnhancedBulkAdd() {
     let currentCategory = "General"
 
     for (const line of lines) {
-      // Check if line ends with ':' - it's a category
       if (line.endsWith(":")) {
         currentCategory = line.slice(0, -1).trim()
-        if (!result[currentCategory]) {
-          result[currentCategory] = []
-        }
+        if (!result[currentCategory]) result[currentCategory] = []
       } else {
-        // It's a task
-        if (!result[currentCategory]) {
-          result[currentCategory] = []
-        }
+        if (!result[currentCategory]) result[currentCategory] = []
         result[currentCategory].push(line)
       }
     }
-
     return result
   }
 
   const getRandomColor = () => {
-    const colors = [
-      "#3B82F6",
-      "#EF4444",
-      "#10B981",
-      "#8B5CF6",
-      "#F59E0B",
-      "#06B6D4",
-      "#EC4899",
-      "#6366F1",
-      "#84CC16",
-      "#1F2937",
-      "#DC2626",
-      "#059669",
-      "#7C3AED",
-      "#D97706",
-      "#0891B2",
-      "#BE185D",
-    ]
+    const colors = ["#3B82F6", "#EF4444", "#10B981", "#8B5CF6", "#F59E0B", "#06B6D4", "#EC4899", "#6366F1"]
     return colors[Math.floor(Math.random() * colors.length)]
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!tasksText.trim()) return
 
-    if (tasksText.trim()) {
-      const parsedTasks = parseTasksWithCategories(tasksText)
+    const parsedTasks = parseTasksWithCategories(tasksText)
 
-      Object.entries(parsedTasks).forEach(([categoryName, taskDescriptions]) => {
-        // Find or create category
-        let category = categories.find((c) => c.name.toLowerCase() === categoryName.toLowerCase())
+    Object.entries(parsedTasks).forEach(([categoryName, taskDescriptions]) => {
+      let category = categories.find((c) => c.name.toLowerCase() === categoryName.toLowerCase())
 
-        if (!category) {
-          // Create new category
-          const newCategory: TaskCategory = {
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-            name: categoryName,
-            color: getRandomColor(),
-            description: `Auto-created category for ${categoryName}`,
-            createdAt: new Date(),
-          }
-          addCategory(newCategory)
-          category = newCategory
+      if (!category) {
+        const newCategory: TaskCategory = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+          name: categoryName,
+          color: getRandomColor(),
+          description: `Auto-created category for ${categoryName}`,
+          createdAt: new Date(),
         }
+        addCategory(newCategory)
+        category = newCategory
+      }
 
-        // Add tasks to this category
-        taskDescriptions.forEach((description) => {
-          addTask({
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-            description,
-            category: "inbox", // Send to inbox instead of clarified
-            createdAt: new Date(),
-            categories: [category.id],
-            // Remove all default assumptions - let user clarify these values
-            completed: false,
-            subtasks: [],
-            dependencies: [],
-          })
-        })
+      taskDescriptions.forEach((description) => {
+        addTask(withCategoryDefaults(createListItem(description, [category!.id]), category))
       })
+    })
 
-      setTasksText("")
-      setOpen(false)
-    }
+    setTasksText("")
+    setOpen(false)
   }
 
   return (
@@ -128,31 +98,17 @@ export function EnhancedBulkAdd() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Bulk Add Tasks with Categories</DialogTitle>
+          <DialogTitle>Bulk Add Tasks with Lists</DialogTitle>
           <DialogDescription>
-            Add multiple tasks at once. Use category names followed by ':' to organize tasks, or just list tasks without
-            categories.
+            Add multiple tasks at once. Use list names followed by &apos;:&apos; to organize tasks.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 flex-1 overflow-hidden flex flex-col">
           <div className="space-y-2 flex-1 overflow-hidden flex flex-col">
-            <Label htmlFor="tasks">Tasks and Categories</Label>
+            <Label htmlFor="tasks">Tasks and Lists</Label>
             <Textarea
               id="tasks"
-              placeholder="Writing:
-100% human generated content
-Something else (zine)
-Fuck This Shit (pamphlet)
-
-Literally actually most important:
-Quit vaping
-Win Perplexity Hackathon
-Elijah vinyl
-
-Or just list tasks without categories:
-Buy groceries
-Call dentist
-Review project proposal"
+              placeholder={"Writing:\nDraft chapter 1\nEdit outline\n\nGroceries:\nMilk\nBread"}
               value={tasksText}
               onChange={(e) => setTasksText(e.target.value)}
               className="flex-1 resize-none font-mono text-sm"
@@ -160,21 +116,14 @@ Review project proposal"
             />
           </div>
           <div className="text-xs text-muted-foreground space-y-1">
-            <p>
-              <strong>Category Mode:</strong> Lines ending with ':' create categories for tasks listed below them.
-            </p>
-            <p>
-              <strong>Simple Mode:</strong> Just list tasks line by line - they'll go to "General" category.
-            </p>
-            <p>All tasks will be sent to your inbox for clarification.</p>
+            <p>Lines ending with &apos;:&apos; create lists. Items go directly into those lists.</p>
           </div>
           <div className="flex justify-between items-center">
             <div className="text-sm text-muted-foreground">
-              {tasksText.split("\n").filter((line) => line.trim() && !line.trim().endsWith(":")).length} tasks ready to
-              add
+              {tasksText.split("\n").filter((line) => line.trim() && !line.trim().endsWith(":")).length} tasks ready
             </div>
             <Button type="submit" disabled={!tasksText.trim()}>
-              Add Tasks to Inbox
+              Add Tasks
             </Button>
           </div>
         </form>

@@ -1,3 +1,13 @@
+/**
+ * components/Home/ToDo/todo-panel.tsx — To-Do panel
+ *
+ * The day/week/month to-do view. Groups items by tier (A+, A, A/B, B, C, D),
+ * shows quarterly/immediate-importance flags (Q+/Q, I+/I) and computed overdue
+ * indicators, and supports complete/edit/reschedule. Same underlying records as
+ * the Scheduler's planned-tasks lists (spec §7.3).
+ *
+ * Spec: §8.4 (To-Do panel). Carry-over (§7.7) not yet automated.
+ */
 "use client"
 
 import { useState, useEffect } from "react"
@@ -8,28 +18,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, CheckCircle2, Eye, Calendar, Clock, AlertTriangle } from "lucide-react"
+import { Plus, CheckCircle2, Eye, EyeOff, Calendar, Clock, AlertTriangle, ArrowRight } from "lucide-react"
 import { useTaskStore } from "@/lib/task-store"
-import { formatDateKey } from "@/lib/date-utils"
+import { pushTaskOnePeriod } from "@/lib/item-utils"
+import {
+  getWeekString,
+  parseWeekString,
+  parseLocalDate,
+  taskScheduledOnDay,
+  taskScheduledInWeek,
+  taskScheduledInMonth,
+} from "@/lib/date-utils"
 import {
   format,
   startOfWeek,
-  endOfWeek,
   startOfMonth,
-  endOfMonth,
   differenceInDays,
   differenceInWeeks,
   differenceInMonths,
 } from "date-fns"
-import type { TodoItem } from "@/lib/types"
+import type { TodoItem, Task } from "@/lib/types"
 import { Switch } from "@/components/ui/switch"
 import { TaskDetailPopup } from "@/components/task-detail-popup"
 
 export function TodoPanel() {
-  const { tasks, updateTask } = useTaskStore()
+  const { tasks, updateTask, addTask } = useTaskStore()
   const [todoItems, setTodoItems] = useState<TodoItem[]>([])
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [activeTodoTab, setActiveTodoTab] = useState<"day" | "week" | "month">("day")
   const [newTodo, setNewTodo] = useState({
     description: "",
     tier: "A" as const,
@@ -37,30 +54,45 @@ export function TodoPanel() {
     quarterlyImportance: "I" as const,
   })
   const [showAllTasks, setShowAllTasks] = useState(false)
+  const [expandedPeriods, setExpandedPeriods] = useState<Record<string, boolean>>({})
+
+  // Show this many rows before collapsing the rest behind a "Show more" toggle.
+  const COLLAPSE_THRESHOLD = 8
 
   // Initialize todo items from tasks
   useEffect(() => {
     const now = new Date()
 
-    const items: TodoItem[] = tasks
-      .filter((task) => !task.completed && (showAllTasks || task.scheduledDate))
-      .map((task) => {
-        const scheduledDate = task.scheduledDate ? new Date(task.scheduledDate) : new Date()
+    const isScheduled = (task: (typeof tasks)[number]) => {
+      const monthKey = now.toISOString().slice(0, 7)
+      const weekKey = getWeekString(now)
+      return (
+        taskScheduledOnDay(task, now) ||
+        taskScheduledInWeek(task, weekKey) ||
+        taskScheduledInMonth(task, monthKey) ||
+        !!task.scheduledYear
+      )
+    }
 
-        // Calculate overdue based on the scheduled period
+    const items: TodoItem[] = tasks
+      .filter((task) => !task.completed && !task.hiddenFromTodo && (showAllTasks || isScheduled(task)))
+      .map((task) => {
+        const scheduledDate = task.scheduledDate
+          ? parseLocalDate(task.scheduledDate) ?? new Date(task.scheduledDate)
+          : task.deadline
+            ? parseLocalDate(task.deadline) ?? new Date(task.deadline)
+            : null
+
+        // Calculate overdue based on the scheduled date (only day-level
+        // assignments have a meaningful overdue count).
         let daysOverdue = 0
         let weeksOverdue = 0
         let monthsOverdue = 0
 
-        if (task.scheduledDate && !task.completed) {
-          const daysDiff = differenceInDays(now, scheduledDate)
-          const weeksDiff = differenceInWeeks(now, scheduledDate)
-          const monthsDiff = differenceInMonths(now, scheduledDate)
-
-          // Only count as overdue if the scheduled date has passed
-          daysOverdue = Math.max(0, daysDiff)
-          weeksOverdue = Math.max(0, weeksDiff)
-          monthsOverdue = Math.max(0, monthsDiff)
+        if (scheduledDate && !task.completed) {
+          daysOverdue = Math.max(0, differenceInDays(now, scheduledDate))
+          weeksOverdue = Math.max(0, differenceInWeeks(now, scheduledDate))
+          monthsOverdue = Math.max(0, differenceInMonths(now, scheduledDate))
         }
 
         return {
@@ -72,11 +104,18 @@ export function TodoPanel() {
           daysOverdue,
           weeksOverdue,
           monthsOverdue,
+          daysPushed: task.daysPushed ?? 0,
+          weeksPushed: task.weeksPushed ?? 0,
+          monthsPushed: task.monthsPushed ?? 0,
+          hiddenFromTodo: task.hiddenFromTodo,
           completed: task.completed,
           taskId: task.id,
           quarterlyImportance: getQuarterlyImportance(task),
           estimatedDuration: task.estimatedDuration,
           rewardValue: task.rewardValue,
+          scheduledWeek: task.scheduledWeek,
+          scheduledMonth: task.scheduledMonth,
+          scheduledYear: task.scheduledYear,
         }
       })
 
@@ -84,7 +123,7 @@ export function TodoPanel() {
   }, [tasks, showAllTasks])
 
   const getTierFromTask = (task: any): TodoItem["tier"] => {
-    const score = task.urgency + task.importance
+    const score = (task.urgency ?? 3) + (task.importance ?? 3)
     if (score >= 9) return "A+"
     if (score >= 7) return "A"
     if (score >= 5) return "A/B"
@@ -93,8 +132,10 @@ export function TodoPanel() {
   }
 
   const getQuarterlyImportance = (task: any): TodoItem["quarterlyImportance"] => {
-    if (task.urgency >= 4) return task.importance >= 4 ? "Q+" : "I+"
-    return task.importance >= 4 ? "Q" : "I"
+    const urgency = task.urgency ?? 3
+    const importance = task.importance ?? 3
+    if (urgency >= 4) return importance >= 4 ? "Q+" : "I+"
+    return importance >= 4 ? "Q" : "I"
   }
 
   const getTierColor = (tier: TodoItem["tier"]) => {
@@ -116,43 +157,77 @@ export function TodoPanel() {
     }
   }
 
-  const getOverdueColor = (days: number) => {
-    if (days === 0) return "text-gray-600"
-    if (days <= 7) return "text-yellow-600"
-    if (days <= 30) return "text-orange-600"
-    return "text-red-600"
+  const getScheduleLabel = (todo: TodoItem): string => {
+    if (todo.scheduledDate) return `Scheduled: ${format(todo.scheduledDate, "MMM d, yyyy")}`
+    if (todo.scheduledWeek) {
+      const range = parseWeekString(todo.scheduledWeek)
+      if (range) return `Scheduled: week of ${format(range.start, "MMM d, yyyy")}`
+    }
+    if (todo.scheduledMonth) {
+      const parsed = new Date(`${todo.scheduledMonth}-01T00:00:00`)
+      if (!isNaN(parsed.getTime())) return `Scheduled: ${format(parsed, "MMMM yyyy")}`
+    }
+    if (todo.scheduledYear) return `Scheduled: ${todo.scheduledYear}`
+    return "Not scheduled"
   }
 
   const handleAddTodo = () => {
+    if (!newTodo.description.trim()) return
     const now = new Date()
-    let scheduledDate = newTodo.scheduledDate
 
-    // Determine the current tab and set appropriate date
-    const currentTab = document.querySelector('[data-state="active"]')?.getAttribute("value")
-
-    if (currentTab === "day") {
-      scheduledDate = now
-    } else if (currentTab === "week") {
-      scheduledDate = startOfWeek(now, { weekStartsOn: 1 })
-    } else if (currentTab === "month") {
-      scheduledDate = startOfMonth(now)
+    let urgency = 3
+    let importance = 3
+    switch (newTodo.quarterlyImportance) {
+      case "Q+":
+        urgency = 5
+        importance = 5
+        break
+      case "Q":
+        urgency = 3
+        importance = 5
+        break
+      case "I+":
+        urgency = 5
+        importance = 3
+        break
+      case "I":
+        urgency = 3
+        importance = 3
+        break
     }
 
-    const todo: TodoItem = {
-      id: Date.now().toString(),
-      ...newTodo,
-      scheduledDate,
-      createdDate: new Date(),
-      daysOverdue: 0,
-      weeksOverdue: 0,
-      monthsOverdue: 0,
+    const task: Task = {
+      id: `todo-${Date.now()}`,
+      description: newTodo.description.trim(),
+      category: "clarified",
+      createdAt: now,
       completed: false,
+      categories: [],
+      urgency,
+      importance,
+      estimatedDuration: 30,
+      cognitiveLoad: 2,
+      dependencies: [],
+      context: "@general",
+      entropy: 0.5,
+      rewardValue: 5,
+      allowPartialCompletion: false,
+      minimumChunkSize: 15,
     }
-    setTodoItems([...todoItems, todo])
+
+    if (activeTodoTab === "day") {
+      task.scheduledDate = now
+    } else if (activeTodoTab === "week") {
+      task.scheduledWeek = getWeekString(now)
+    } else {
+      task.scheduledMonth = now.toISOString().slice(0, 7)
+    }
+
+    addTask(task)
     setNewTodo({
       description: "",
       tier: "A",
-      scheduledDate: scheduledDate,
+      scheduledDate: now,
       quarterlyImportance: "I",
     })
     setShowAddDialog(false)
@@ -179,76 +254,86 @@ export function TodoPanel() {
     setSelectedTaskId(taskId)
   }
 
+  const handlePush = (todoId: string, period: "day" | "week" | "month") => {
+    const task = tasks.find((t) => t.id === todoId)
+    if (!task) return
+    updateTask({ ...task, ...pushTaskOnePeriod(task, period) })
+  }
+
+  const handleHide = (todoId: string) => {
+    const task = tasks.find((t) => t.id === todoId)
+    if (!task) return
+    updateTask({ ...task, hiddenFromTodo: true })
+  }
+
   const getFilteredTodos = (period: "day" | "week" | "month") => {
     const now = new Date()
+    const hasSchedule = (item: TodoItem) =>
+      !!(item.scheduledDate || item.scheduledWeek || item.scheduledMonth || item.scheduledYear)
 
     return todoItems
       .filter((item) => {
         if (item.completed) return false
 
-        if (!showAllTasks && !item.scheduledDate) return false
-
-        if (!item.scheduledDate) return showAllTasks
-
-        const itemDate = new Date(item.scheduledDate)
+        // Tasks with no schedule only appear when "Show All Tasks" is on.
+        if (!hasSchedule(item)) return showAllTasks
 
         switch (period) {
           case "day":
-            return formatDateKey(itemDate) === formatDateKey(now)
+            return taskScheduledOnDay(item, now)
           case "week":
-            const weekStart = startOfWeek(now, { weekStartsOn: 1 })
-            const weekEnd = endOfWeek(now, { weekStartsOn: 1 })
-            return itemDate >= weekStart && itemDate <= weekEnd
+            return taskScheduledInWeek(item, getWeekString(now))
           case "month":
-            const monthStart = startOfMonth(now)
-            const monthEnd = endOfMonth(now)
-            return itemDate >= monthStart && itemDate <= monthEnd
+            return taskScheduledInMonth(item, now.toISOString().slice(0, 7))
           default:
             return true
         }
       })
       .sort((a, b) => {
-        // Sort by tier first, then by overdue days
         const tierOrder = { "A+": 0, A: 1, "A/B": 2, B: 3, C: 4, D: 5 }
         const tierDiff = tierOrder[a.tier] - tierOrder[b.tier]
         if (tierDiff !== 0) return tierDiff
-        return b.daysOverdue - a.daysOverdue
+        const pushedKey = period === "day" ? "daysPushed" : period === "week" ? "weeksPushed" : "monthsPushed"
+        return b[pushedKey] - a[pushedKey]
       })
   }
 
   const renderTodoTable = (todos: TodoItem[], period: "day" | "week" | "month") => {
-    const overdueKey = period === "day" ? "daysOverdue" : period === "week" ? "weeksOverdue" : "monthsOverdue"
-    const overdueLabel = period === "day" ? "Days" : period === "week" ? "Weeks" : "Months"
+    const pushedKey = period === "day" ? "daysPushed" : period === "week" ? "weeksPushed" : "monthsPushed"
+    const pushedLabel =
+      period === "day" ? "Days (pushed)" : period === "week" ? "Weeks (pushed)" : "Months (pushed)"
+    const pushLabel = period === "day" ? "next day" : period === "week" ? "next week" : "next month"
+
+    const isExpanded = expandedPeriods[period]
+    const visibleTodos = isExpanded ? todos : todos.slice(0, COLLAPSE_THRESHOLD)
+    const hiddenCount = todos.length - visibleTodos.length
 
     return (
       <div className="border rounded-lg overflow-hidden">
         <div className="bg-gray-50 grid grid-cols-12 gap-4 p-3 text-sm font-medium border-b">
-          <div className="col-span-6">Task</div>
+          <div className="col-span-5">Task</div>
           <div className="col-span-2 text-center">Tier</div>
-          <div className="col-span-2 text-center">{overdueLabel}</div>
+          <div className="col-span-2 text-center">{pushedLabel}</div>
           <div className="col-span-1 text-center">Q/I</div>
-          <div className="col-span-1 text-center">Actions</div>
+          <div className="col-span-2 text-center">Actions</div>
         </div>
 
         <div className="divide-y">
-          {todos.map((todo) => (
+          {visibleTodos.map((todo) => (
             <div
               key={todo.id}
               className="grid grid-cols-12 gap-4 p-3 hover:bg-gray-50 cursor-pointer"
               onClick={() => handleTaskClick(todo.taskId || todo.id)}
             >
-              <div className="col-span-6">
+              <div className="col-span-5">
                 <div className="font-medium">{todo.description}</div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {todo.scheduledDate ? `Scheduled: ${format(todo.scheduledDate, "MMM d, yyyy")}` : "Not scheduled"}
-                </div>
+                <div className="text-xs text-gray-500 mt-1">{getScheduleLabel(todo)}</div>
               </div>
 
-              <div className="col-span-2 flex justify-center">
+              <div className="col-span-2 flex justify-center" onClick={(e) => e.stopPropagation()}>
                 <Select
                   value={todo.tier}
-                  onValueChange={(value: TodoItem["tier"]) => updateTodoTier(todo.id, value)}
-                  onClick={(e) => e.stopPropagation()}
+                  onValueChange={(value) => updateTodoTier(todo.id, value as TodoItem["tier"])}
                 >
                   <SelectTrigger className="w-20 h-8">
                     <SelectValue />
@@ -265,14 +350,15 @@ export function TodoPanel() {
               </div>
 
               <div className="col-span-2 text-center">
-                <span className={`font-medium ${getOverdueColor(todo[overdueKey])}`}>{todo[overdueKey]}</span>
+                <span className={`font-medium ${todo[pushedKey] > 0 ? "text-orange-600" : "text-gray-600"}`}>
+                  {todo[pushedKey]}
+                </span>
               </div>
 
-              <div className="col-span-1 flex justify-center">
+              <div className="col-span-1 flex justify-center" onClick={(e) => e.stopPropagation()}>
                 <Select
                   value={todo.quarterlyImportance}
-                  onValueChange={(value: TodoItem["quarterlyImportance"]) => updateQuarterlyImportance(todo.id, value)}
-                  onClick={(e) => e.stopPropagation()}
+                  onValueChange={(value) => updateQuarterlyImportance(todo.id, value as TodoItem["quarterlyImportance"])}
                 >
                   <SelectTrigger className="w-16 h-8">
                     <SelectValue />
@@ -286,15 +372,13 @@ export function TodoPanel() {
                 </Select>
               </div>
 
-              <div className="col-span-1 flex justify-center gap-1">
+              <div className="col-span-2 flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-6 w-6 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleComplete(todo.id)
-                  }}
+                  title="Mark complete"
+                  onClick={() => handleComplete(todo.id)}
                 >
                   <CheckCircle2 className="h-3 w-3" />
                 </Button>
@@ -302,12 +386,28 @@ export function TodoPanel() {
                   size="sm"
                   variant="ghost"
                   className="h-6 w-6 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleTaskClick(todo.taskId || todo.id)
-                  }}
+                  title={`Push to ${pushLabel}`}
+                  onClick={() => handlePush(todo.id, period)}
+                >
+                  <ArrowRight className="h-3 w-3" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0"
+                  title="View details"
+                  onClick={() => handleTaskClick(todo.taskId || todo.id)}
                 >
                   <Eye className="h-3 w-3" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 w-6 p-0"
+                  title="Hide from list"
+                  onClick={() => handleHide(todo.id)}
+                >
+                  <EyeOff className="h-3 w-3" />
                 </Button>
               </div>
             </div>
@@ -316,6 +416,16 @@ export function TodoPanel() {
 
         {todos.length === 0 && (
           <div className="p-8 text-center text-gray-500">No tasks scheduled for this {period}</div>
+        )}
+
+        {todos.length > COLLAPSE_THRESHOLD && (
+          <button
+            type="button"
+            onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !prev[period] }))}
+            className="w-full border-t p-2 text-sm font-medium text-primary hover:bg-gray-50 transition-colors"
+          >
+            {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
+          </button>
         )}
       </div>
     )
@@ -452,7 +562,7 @@ export function TodoPanel() {
         </div>
       </div>
 
-      <Tabs defaultValue="day" className="w-full">
+      <Tabs defaultValue="day" className="w-full" onValueChange={(v) => setActiveTodoTab(v as typeof activeTodoTab)}>
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="day">Day</TabsTrigger>
           <TabsTrigger value="week">Week</TabsTrigger>

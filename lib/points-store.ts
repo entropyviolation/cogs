@@ -1,3 +1,16 @@
+/**
+ * lib/points-store.ts — Points ledger store
+ *
+ * Zustand store for the gamification layer: an append-only `PointsEntry[]` ledger
+ * (date, taskId, points, description) persisted to localStorage under
+ * `points-store`. Provides total/day/week/month sums of earned points and
+ * "possible points" projections from not-yet-completed scheduled tasks (used by
+ * the Home dashboard's Points Stats).
+ *
+ * Spec: §14 (Points, Rewards & Regret). Missing vs. spec: objective
+ * point sources, configurable multipliers, and regret accrual — see
+ * docs/SPEC_MAPPING.md §14.
+ */
 "use client"
 
 import { create } from "zustand"

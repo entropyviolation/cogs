@@ -1,21 +1,40 @@
+/**
+ * lib/types.ts — Shared data-model types
+ *
+ * The single source of TypeScript interfaces/enums used across COGS: tasks,
+ * to-do items, calendar events, plans, categories/folders, weekly-habit types,
+ * scheduling, and review records.
+ *
+ * Spec: this is where the unified "Item" model (spec §5) will converge. The
+ * current `Task` interface intentionally still carries v1's near-duplicate fields
+ * (`category` vs `categories`, `entropy` vs `cognitiveLoad`, `context` vs future
+ * tags) — see docs/SPEC_MAPPING.md §5 for the planned consolidation.
+ */
 export interface Task {
   id: string
   description: string
-  category: "inbox" | "clarified" | "scheduled" | "completed"
+  // NOTE: v1 lifecycle bucket. Spec §5.3 expands this to a richer `status`
+  // (inbox | clarified | active | scheduled | completed | archived).
+  category: "inbox" | "clarified" | "scheduled" | "completed" | "list"
   createdAt: Date
-  estimatedDuration: number // minutes (renamed from effort)
-  actualDuration?: number // minutes - set when task is completed
-  cognitiveLoad: number // 1-3
-  urgency: number // 1-5
-  importance: number // 1-5
-  dependencies: string[] // task IDs
-  context: string // @home, @work, etc.
-  entropy: number // 0-1
-  rewardValue: number // unlimited value
   completed: boolean
-  deadline?: Date // Optional deadline
-  // Enhanced functionality
   categories: string[] // Multiple categories a task can belong to
+  // ---- Next-actions / scheduling fields (optional; only meaningful for items
+  // in the Next Actions folder tree — see lib/item-utils.ts) ----------------
+  estimatedDuration?: number // minutes
+  actualDuration?: number // minutes - set when task is completed
+  cognitiveLoad?: number // 1-3
+  urgency?: number // 1-5
+  importance?: number // 1-5
+  dependencies?: string[] // task IDs
+  context?: string // @home, @work, etc.
+  entropy?: number // 0-1
+  rewardValue?: number
+  allowPartialCompletion?: boolean
+  minimumChunkSize?: number // minimum minutes for partial completion
+  /** Per-item override: show in Scheduler when true; hide when false. */
+  scheduleable?: boolean
+  deadline?: Date // Optional deadline
   why?: string // Why this task needs to be done
   consequences?: string // What happens if not done
   scheduledDate?: Date // When task is scheduled
@@ -23,12 +42,15 @@ export interface Task {
   scheduledWeek?: string // Week range (e.g., "2024-05-19_2024-05-25")
   scheduledMonth?: string // Month (e.g., "2024-05")
   scheduledYear?: string // Year (e.g., "2024")
+  /** How many times this task was pushed forward in the To-Do day/week/month views. */
+  daysPushed?: number
+  weeksPushed?: number
+  monthsPushed?: number
+  /** Hide from To-Do lists without marking complete. */
+  hiddenFromTodo?: boolean
   notes?: string // Additional notes
   parentTaskId?: string // For subtasks
   subtasks?: { id: string; description: string; completed: boolean }[] // Array of subtask objects
-  // New fields for partial completion
-  allowPartialCompletion: boolean
-  minimumChunkSize: number // minimum minutes for partial completion
   completedChunks?: { date: Date; duration: number; notes?: string }[] // track partial completions
   // New fields
   taskDescription?: string // Optional detailed description
@@ -53,26 +75,105 @@ export interface Task {
     }
     completedCount?: number // how many times completed so far
   }
-  operationId?: string
-  isOperation?: boolean
-  operationCategory?: string
+  // Optional custom icon (orb path under /orbs-removebackground or a data URL
+  // from the user's uploaded icon library). Used by the Lists "File Manager".
+  icon?: string
+  // Flexible, list-driven attributes (spec §5). Keyed by AttributeDefinition.id.
+  attributes?: Record<string, AttributeValue>
+  /** Logged actual time segments (distinct from estimatedDuration plan). */
+  timeLogs?: TimeLogEntry[]
 }
+
+export interface TimeLogEntry {
+  id: string
+  date: string // YYYY-MM-DD
+  startTime?: string // HH:mm
+  endTime?: string
+  durationMinutes: number
+  notes?: string
+  taskId?: string
+  location?: string
+  activityLabel?: string
+}
+
+/**
+ * Flexible per-item attributes (spec §5: unified Item model). A list can define
+ * an attribute schema (`TaskCategory.itemAttributes`); items store concrete
+ * values in `Task.attributes` keyed by the attribute id. Values are kept as
+ * primitives so they serialize cleanly alongside the rest of the task store.
+ */
+export type AttributeType =
+  | "string"
+  | "boolean"
+  | "color"
+  | "datetime"
+  | "list"
+  | "multistring"
+  | "number"
+  | "selection"
+  | "image"
+  | "multiimage"
+  | "item"
+  | "link"
+  | "goal" // an x / y progress value with custom labels (e.g. actual / goal)
+
+export type BooleanDisplay = "checkbox" | "switch"
+
+export interface AttributeDefinition {
+  id: string
+  name: string
+  type: AttributeType
+  /** Manual options for selection-type attributes. */
+  options?: string[]
+  unit?: string // optional display unit/suffix (e.g. "$", "min")
+  labels?: { current?: string; target?: string } // for goal
+  /** For list/item: optional category scope for references. */
+  refListId?: string
+  /** boolean: render as checkbox or toggle switch. */
+  booleanDisplay?: BooleanDisplay
+  /** number: allow decimal values when true. */
+  allowFloat?: boolean
+  /** selection / multistring: allow picking or storing multiple values. */
+  allowMultiple?: boolean
+  /** selection: where option choices come from. */
+  optionSource?: "manual" | "list"
+  /** selection with optionSource "list": category id whose items supply options. */
+  optionListId?: string
+  /** datetime: date-only, time-only, or full datetime input. */
+  datetimeMode?: "date" | "time" | "datetime"
+}
+
+export interface GoalValue {
+  current: number
+  target: number
+}
+
+export type AttributeValue = string | number | boolean | string[] | GoalValue | null | undefined
 
 // To-do tracking system
 export interface TodoItem {
   id: string
   description: string
   tier: "A+" | "A" | "A/B" | "B" | "C" | "D"
-  scheduledDate: Date
+  scheduledDate: Date | null
   createdDate: Date
   daysOverdue: number
   weeksOverdue: number
   monthsOverdue: number
+  daysPushed: number
+  weeksPushed: number
+  monthsPushed: number
+  hiddenFromTodo?: boolean
   completed: boolean
   taskId?: string // Reference to main task if applicable
   quarterlyImportance?: "Q+" | "Q" | "I+" | "I" // Q = Quarterly important, I = Immediately important
   estimatedDuration?: number // minutes
   rewardValue?: number
+  // Mirror of the Scheduler's coarser scheduling fields so the To-Do tabs can
+  // surface tasks scheduled at week/month/year granularity (not just by date).
+  scheduledWeek?: string
+  scheduledMonth?: string
+  scheduledYear?: string
 }
 
 // Calendar event for planning
@@ -82,12 +183,16 @@ export interface CalendarEvent {
   startTime: string // "09:00"
   endTime: string // "10:00"
   date: Date
+  endDate?: Date
   type: "event" | "task" | "hardcoded"
   taskId?: string
   color?: string
   isScheduled: boolean
   estimatedDuration?: number
   rewardValue?: number
+  isAllDay?: boolean
+  location?: string
+  description?: string
 }
 
 // Day plan text
@@ -110,11 +215,14 @@ export interface MonthlyItem {
 // Weekly task tracker types
 export enum TaskType {
   BOOLEAN = "BOOLEAN",
-  TIME = "TIME",
-  COUNT = "COUNT",
+  GOAL = "GOAL",
+  TIME = "TIME", // legacy — treated as GOAL
+  COUNT = "COUNT", // legacy — treated as GOAL
   TEXT = "TEXT",
   INCREMENTAL = "INCREMENTAL",
 }
+
+export type HabitFrequency = "daily" | "weekly" | "monthly"
 
 export type DayOfWeek = "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday"
 
@@ -130,8 +238,9 @@ export interface WeeklyTask {
   type: TaskType
   goal?: number
   unit?: string
-  categoryId?: string
-  rewardValue?: number // Points awarded on completion
+  categoryId?: string // deprecated — kept for data compat
+  rewardValue?: number
+  frequency?: HabitFrequency // default daily
   incrementalData?: {
     currentValues: Record<string, number>
     weeklyIncrement: Record<string, number>
@@ -172,7 +281,7 @@ export interface GraphEdge {
   isOnCriticalPath: boolean
 }
 
-// New type for custom categories
+// New type for custom categories (a.k.a. "Lists" in the UI)
 export interface TaskCategory {
   id: string
   name: string
@@ -180,9 +289,38 @@ export interface TaskCategory {
   description?: string
   createdAt: Date
   order?: number // for custom ordering
-  operationId?: string
-  isOperation?: boolean
-  operationCategory?: string
+  // When true (default), items in this list are surfaced in the Scheduler.
+  scheduleable?: boolean
+  // Optional custom icon (orb path or uploaded data URL) for the Lists view.
+  icon?: string
+  // Optional attribute schema applied to items in this list (spec §5). Items
+  // belonging to multiple lists get the union of their lists' attributes.
+  itemAttributes?: AttributeDefinition[]
+  /** Default attribute values applied when new items are added to this list. */
+  defaultAttributeValues?: Record<string, AttributeValue>
+  /** Attribute ids shown in the list table view (defaults to all itemAttributes). */
+  displayedAttributes?: string[]
+  /** Singular label for items in this list (e.g. book, habit). Next Actions defaults to "task". */
+  itemLabel?: string
+  /** Tabs shown in item detail view for items in this list. */
+  detailPanels?: ItemDetailPanel[]
+}
+
+export type ItemDetailPanel = "details" | "scheduling" | "dependencies" | "subtasks" | "analysis" | "time"
+
+export interface Goal {
+  id: string
+  title: string
+  description?: string
+  type: "numerical" | "boolean" | "count"
+  target: number
+  current: number
+  period: "week" | "month" | "year"
+  category: string
+  points: number
+  deadline?: Date
+  completed: boolean
+  createdAt: Date
 }
 
 // Scheduling types
@@ -220,69 +358,37 @@ export interface DayEvent {
   color?: string
 }
 
-// New type for category folders
+// New type for category folders (folders that nest "Lists" in the UI).
+// Folders carry default settings that new lists created inside them inherit.
 export interface CategoryFolder {
   id: string
   name: string
   createdAt: Date
   categoryIds: string[] // List of category IDs in this folder
-}
-
-// Operation types
-export interface OperationLog {
-  timestamp: Date
-  content: string
-}
-
-export interface OperationReview {
-  completedAt: Date
-  satisfaction: number // 1-10
-  lessonsLearned: string
-  whatWorked: string
-  whatDidnt: string
-  nextTime: string
-}
-
-export interface OperationGoal {
-  id: string
-  phaseId: string
-  title: string
-  taskIds: string[]
-  kpis?: string[]
-  notes?: string
-  isCompleted: boolean
-}
-
-export interface OperationPhase {
-  id: string
-  operationId: string
-  name: string
+  /** Nested folder support (subfolder of another folder). */
+  parentFolderId?: string
+  color?: string
   description?: string
-  order: number
-  goals: OperationGoal[]
-  isCompleted: boolean
-  deadline?: Date
+  // Default scheduleable value applied to lists created inside this folder.
+  scheduleable?: boolean
+  // Optional custom icon (orb path or uploaded data URL) for the Lists view.
+  icon?: string
 }
 
-export interface Operation {
-  id: string
-  title: string
-  goals: string[]
-  objectives: string[]
-  timeline: { start: Date; end?: Date }
-  status: "not started" | "active" | "paused" | "completed"
-  plan: string
-  notes?: string
-  tasks: string[]
-  phases?: OperationPhase[]
-  resources?: string[]
-  logs: OperationLog[]
-  review?: OperationReview
-  createdAt: Date
-  updatedAt: Date
-  deadline?: Date
-  activityLog?: { date: string; duration: number }[]
-  categoryId?: string // The category created for this operation
-  lastWorkedOn?: Date // Track when operation was last worked on
-  statusNotes?: string // Status notes for the operation
+// ---- Period reviews (day / week / month / quarter / year) ----------------
+export type ReviewPeriod = "day" | "week" | "month" | "quarter" | "year"
+
+export interface PeriodReview {
+  id: string // `${period}:${periodKey}`
+  period: ReviewPeriod
+  periodKey: string // day=YYYY-MM-DD, week=getWeekString, month=YYYY-MM, quarter=YYYY-Qn, year=YYYY
+  completedAt: Date
+  summary: string
+  gratitude: string[]
+  nextPlans: string
+  planReflection?: string
+  reflections: Record<string, string> // reflection question id -> answer
+  // Snapshot of how the carried-over tasks were resolved during the review.
+  resolvedTaskIds: string[] // marked done
+  pushedTaskIds: string[] // pushed to the next period
 }

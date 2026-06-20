@@ -1,3 +1,11 @@
+/**
+ * components/Home/Habits/week-navigation.tsx — Habit week picker
+ *
+ * The week navigation pill: previous/next week, "Today", and the current
+ * date-range label, driving which week the habit grid displays.
+ *
+ * Spec: §9.3 (display & interaction).
+ */
 "use client"
 
 import { Button } from "@/components/ui/button"

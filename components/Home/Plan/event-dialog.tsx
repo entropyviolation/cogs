@@ -1,3 +1,11 @@
+/**
+ * components/Home/Plan/event-dialog.tsx — Event create/edit dialog
+ *
+ * Creates or edits a calendar `CalendarEvent` (title, start/end time, all-day,
+ * date/end-date, location, description, color) via `lib/event-store.ts`.
+ *
+ * Spec: §7.5 (Events).
+ */
 "use client"
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
@@ -8,6 +16,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { format } from "date-fns"
 import type { CalendarEvent } from "@/lib/types"
+import { useEventStore } from "@/lib/event-store"
+import { parseLocalDate } from "@/lib/date-utils"
 
 interface EventDialogProps {
   open: boolean
@@ -18,7 +28,7 @@ interface EventDialogProps {
     title: string
     startTime: string
     endTime: string
-    type: "event"
+    type: CalendarEvent["type"]
     date: Date
     endDate?: Date
     isAllDay?: boolean
@@ -40,17 +50,15 @@ export function EventDialog({
   events,
   setEvents,
 }: EventDialogProps) {
+  const deleteEvent = useEventStore((s) => s.deleteEvent)
+  const updateEvent = useEventStore((s) => s.updateEvent)
+  const addEvent = useEventStore((s) => s.addEvent)
+
   const handleAddEvent = () => {
     if (editingEvent) {
-      // Update existing event
-      setEvents(
-        events.map((event) =>
-          event.id === editingEvent.id ? { ...event, ...newEvent, color: event.color, isScheduled: true } : event,
-        ),
-      )
+      updateEvent({ ...editingEvent, ...newEvent, color: editingEvent.color, isScheduled: true })
       setEditingEvent(null)
     } else {
-      // Add new event
       const event: CalendarEvent = {
         id: Date.now().toString(),
         ...newEvent,
@@ -60,7 +68,7 @@ export function EventDialog({
         location: newEvent.location || "",
         description: newEvent.description || "",
       }
-      setEvents([...events, event])
+      addEvent(event)
     }
 
     setNewEvent({
@@ -133,7 +141,7 @@ export function EventDialog({
                 id="start-date"
                 type="date"
                 value={format(newEvent.date, "yyyy-MM-dd")}
-                onChange={(e) => setNewEvent({ ...newEvent, date: new Date(e.target.value) })}
+                onChange={(e) => setNewEvent({ ...newEvent, date: parseLocalDate(e.target.value) ?? new Date() })}
                 className="bg-gray-800/50 border-gray-600 text-white focus:border-[#8cd4a5] focus:ring-[#8cd4a5]/20 transition-all duration-300"
               />
             </div>
@@ -149,7 +157,7 @@ export function EventDialog({
                   onChange={(e) =>
                     setNewEvent({
                       ...newEvent,
-                      endDate: e.target.value ? new Date(e.target.value) : undefined,
+                      endDate: e.target.value ? (parseLocalDate(e.target.value) ?? undefined) : undefined,
                     })
                   }
                   className="bg-gray-800/50 border-gray-600 text-white focus:border-[#8cd4a5] focus:ring-[#8cd4a5]/20 transition-all duration-300"
@@ -225,7 +233,7 @@ export function EventDialog({
               <Button
                 variant="destructive"
                 onClick={() => {
-                  setEvents(events.filter((e) => e.id !== editingEvent.id))
+                  deleteEvent(editingEvent.id)
                   onOpenChange(false)
                   setEditingEvent(null)
                 }}

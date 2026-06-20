@@ -1,0 +1,58 @@
+import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { format } from "date-fns"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { resetAllStores } from "@/tests/test-utils"
+import { formatLocalDateKey } from "@/lib/date-utils"
+import { DayView } from "./day-view"
+
+vi.mock("./planned-tasks-sidebar", () => ({
+  PlannedTasksSidebar: () => <div data-testid="planned-sidebar">Planned Sidebar</div>,
+}))
+
+vi.mock("./agenda-grid", () => ({
+  AgendaGrid: () => <div data-testid="agenda-grid">Agenda Grid</div>,
+}))
+
+describe("DayView", () => {
+  const currentDate = new Date("2026-06-20T12:00:00")
+
+  beforeEach(() => {
+    resetAllStores()
+  })
+
+  it("renders day title and schedule section", () => {
+    render(
+      <DayView
+        currentDate={currentDate}
+        setCurrentDate={vi.fn()}
+        events={[]}
+        setEvents={vi.fn()}
+        onTaskClick={vi.fn()}
+        onEventClick={vi.fn()}
+        onCreateEvent={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(format(currentDate, "EEEE, MMMM d, yyyy"))).toBeInTheDocument()
+    expect(screen.getByText("Schedule")).toBeInTheDocument()
+    expect(screen.getByTestId("agenda-grid")).toBeInTheDocument()
+  })
+
+  it("persists day plan text to localStorage", async () => {
+    const user = userEvent.setup()
+    render(
+      <DayView
+        currentDate={currentDate}
+        setCurrentDate={vi.fn()}
+        events={[]}
+        setEvents={vi.fn()}
+        onTaskClick={vi.fn()}
+        onEventClick={vi.fn()}
+        onCreateEvent={vi.fn()}
+      />,
+    )
+
+    await user.type(screen.getByPlaceholderText(/Write your day plan/i), "Deep work AM")
+    expect(localStorage.getItem(`dayPlan-${formatLocalDateKey(currentDate)}`)).toBe("Deep work AM")
+  })
+})

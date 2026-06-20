@@ -1,6 +1,16 @@
+/**
+ * components/task-detail-popup.tsx — Compact task detail popup
+ *
+ * A modal/popover detail view of a single task used inline by the Scheduler,
+ * Plan, and To-Do panels (edit fields, complete, reschedule). Lighter-weight
+ * sibling of the full-screen `enhanced-task-detail.tsx`.
+ *
+ * Spec: §5.5 (Item detail view). The spec wants the two detail views consolidated
+ * into one type-aware, always-editable component — see docs/SPEC_MAPPING.md §5.
+ */
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useTaskStore } from "@/lib/task-store"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -31,10 +41,13 @@ import {
   Users,
   FileText,
   Settings,
-  Briefcase,
+  ArrowRight,
 } from "lucide-react"
-import type { Task, TaskCompletionReview, Operation } from "@/lib/types"
+import type { Task, TaskCompletionReview, ItemDetailPanel, TimeLogEntry } from "@/lib/types"
 import { safeDateFormat, safeISODateString, getWeekString } from "@/lib/date-utils"
+import { AttributeValuesEditor, mergeListAttributes } from "@/components/Lists/attribute-editor"
+import { taskIsNextAction } from "@/lib/item-utils"
+import { Switch } from "@/components/ui/switch"
 
 interface TaskDetailPopupProps {
   taskId: string | null
@@ -65,7 +78,7 @@ function TaskCompletionDialog({
     const review: TaskCompletionReview = {
       taskId: task.id,
       completedAt: new Date(),
-      actualDuration: Number.parseInt(actualDuration) || task.estimatedDuration,
+      actualDuration: Number.parseInt(actualDuration) || task.estimatedDuration || 0,
       satisfaction: Number.parseInt(satisfaction),
       resistance: Number.parseInt(resistance),
       focus: Number.parseInt(focus),
@@ -155,118 +168,36 @@ function TaskCompletionDialog({
   )
 }
 
-// Add ConvertToOperationDialog
-interface ConvertToOperationDialogProps {
-  open: boolean
-  onClose: () => void
-  onConvert: (title: string, goals: string[]) => void
-}
-
-function ConvertToOperationDialog({ open, onClose, onConvert }: ConvertToOperationDialogProps) {
-  const [operationTitle, setOperationTitle] = useState("")
-  const [goals, setGoals] = useState<string[]>([])
-  const [newGoal, setNewGoal] = useState("")
-
-  const handleAddGoal = () => {
-    if (newGoal.trim()) {
-      setGoals([...goals, newGoal.trim()])
-      setNewGoal("")
-    }
-  }
-
-  const handleRemoveGoal = (index: number) => {
-    setGoals(goals.filter((_, i) => i !== index))
-  }
-
-  const handleConvert = () => {
-    if (operationTitle.trim()) {
-      onConvert(operationTitle, goals)
-      setOperationTitle("")
-      setGoals([])
-      setNewGoal("")
-      onClose()
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Convert Task to Operation</DialogTitle>
-          <DialogDescription>Promote this task to a complex operation with goals.</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="operation-title">Operation Title</Label>
-            <Input
-              id="operation-title"
-              value={operationTitle}
-              onChange={(e) => setOperationTitle(e.target.value)}
-              placeholder="Enter operation title"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Goals</Label>
-            <div className="space-y-2">
-              {goals.map((goal, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <span className="flex-1 text-sm">{goal}</span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => handleRemoveGoal(index)}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-              <div className="flex gap-2">
-                <Input
-                  value={newGoal}
-                  onChange={(e) => setNewGoal(e.target.value)}
-                  placeholder="Add a goal"
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter" && newGoal.trim()) {
-                      handleAddGoal()
-                    }
-                  }}
-                />
-                <Button onClick={handleAddGoal} size="sm">
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button onClick={handleConvert} disabled={!operationTitle.trim()}>
-              Convert
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps) {
   const allTasks = useTaskStore((state) => state.tasks)
   const categories = useTaskStore((state) => state.categories)
+  const folders = useTaskStore((state) => state.folders)
   const updateTask = useTaskStore((state) => state.updateTask)
   const addTask = useTaskStore((state) => state.addTask)
   const deleteTask = useTaskStore((state) => state.deleteTask)
-  const addOperation = useTaskStore((state) => state.addOperation)
-  const addCategory = useTaskStore((state) => state.addCategory)
 
   const [task, setTask] = useState<Task | null>(null)
   const [originalTask, setOriginalTask] = useState<Task | null>(null)
   const [newSubtaskDescription, setNewSubtaskDescription] = useState("")
   const [selectedDependency, setSelectedDependency] = useState("none")
   const [showCompletionDialog, setShowCompletionDialog] = useState(false)
-  const [showConvertDialog, setShowConvertDialog] = useState(false)
+  const [newAttrName, setNewAttrName] = useState("")
+  const [newAttrValue, setNewAttrValue] = useState("")
+
+  const isNextAction = task ? taskIsNextAction(task, folders) : false
+  const visiblePanels = useMemo((): ItemDetailPanel[] => {
+    if (!task) return ["details"]
+    const defaults: ItemDetailPanel[] = isNextAction
+      ? ["details", "scheduling", "dependencies", "subtasks", "analysis", "time"]
+      : ["details", "time"]
+    const fromLists = (task.categories ?? []).flatMap((cid) => {
+      const c = categories.find((x) => x.id === cid)
+      return c?.detailPanels?.length ? c.detailPanels : []
+    })
+    if (fromLists.length === 0) return defaults
+    const merged = new Set<ItemDetailPanel>(["details", ...fromLists, "time"])
+    return Array.from(merged)
+  }, [task, categories, isNextAction])
 
   useEffect(() => {
     if (taskId) {
@@ -315,6 +246,7 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
           ...task,
           scheduledWeek: weekString,
           scheduledDate: undefined,
+          scheduledTime: undefined,
           scheduledMonth: undefined,
           scheduledYear: undefined,
         })
@@ -322,6 +254,21 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
     },
     [task],
   )
+
+  const handleMoveToWeeklyTodo = useCallback(() => {
+    if (!task) return
+    const weekString = getWeekString(new Date())
+    const updated = {
+      ...task,
+      scheduledWeek: weekString,
+      scheduledDate: undefined,
+      scheduledTime: undefined,
+      scheduledMonth: undefined,
+      scheduledYear: undefined,
+    }
+    setTask(updated)
+    updateTask(updated)
+  }, [task, updateTask])
 
   const addToCategory = useCallback(
     (categoryId: string) => {
@@ -393,11 +340,11 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
       task &&
       selectedDependency &&
       selectedDependency !== "none" &&
-      !task.dependencies.includes(selectedDependency)
+      !((task.dependencies ?? []).includes(selectedDependency))
     ) {
       setTask({
         ...task,
-        dependencies: [...task.dependencies, selectedDependency],
+        dependencies: [...(task.dependencies ?? []), selectedDependency],
       })
       setSelectedDependency("none")
     }
@@ -408,43 +355,18 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
       if (task) {
         setTask({
           ...task,
-          dependencies: task.dependencies.filter((id) => id !== dependencyId),
+          dependencies: (task.dependencies ?? []).filter((id) => id !== dependencyId),
         })
       }
     },
     [task],
   )
 
-  // Add convert handler
-  const handleConvertToOperation = useCallback(
-    (title: string, goals: string[]) => {
-      if (!task) return
-      // Create a new category for the operation
-      const categoryId = `operation-cat-${Date.now()}`
-      const newCategory = {
-        id: categoryId,
-        name: title,
-        color: "#8b5cf6",
-        createdAt: new Date(),
-        order: 0,
-        operationCategory: "true",
-      }
-      addCategory(newCategory)
-      // Create the operation
-      const opId = `operation-${Date.now()}`
-      // TODO: Integrate addOperation from store if available
-      // addOperation(newOperation)
-      // Update the task
-      updateTask({ ...task, isOperation: true, operationId: opId, categories: [...(task.categories || []), categoryId] })
-    },
-    [task, updateTask, addCategory],
-  )
-
   if (!task) {
     return null
   }
 
-  const availableTasksForDependencies = allTasks.filter((t) => t.id !== task.id && !task.dependencies.includes(t.id))
+  const availableTasksForDependencies = allTasks.filter((t) => t.id !== task.id && !(task.dependencies || []).includes(t.id))
 
   return (
     <>
@@ -456,8 +378,13 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                 <div className="p-2 rounded-lg bg-primary/10">
                   <Target className="h-6 w-6 text-primary" />
                 </div>
-                <div>
-                  <DialogTitle className="text-2xl font-bold">{task.description}</DialogTitle>
+                <div className="flex-1 min-w-0">
+                  <Input
+                    value={task.description}
+                    onChange={(e) => setTask({ ...task, description: e.target.value })}
+                    className="text-2xl font-bold border-0 shadow-none px-0 h-auto focus-visible:ring-0"
+                    placeholder="Item name"
+                  />
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant={task.completed ? "default" : "secondary"} className="font-medium">
                       {task.completed ? "Completed" : task.category}
@@ -471,9 +398,6 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                   </div>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" onClick={onClose} className="focus-ring">
-                <X className="h-4 w-4" />
-              </Button>
             </div>
           </DialogHeader>
 
@@ -488,16 +412,6 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                 Complete Task
               </Button>
             )}
-            {!task.completed && !task.isOperation && (
-              <Button
-                variant="outline"
-                onClick={() => setShowConvertDialog(true)}
-                className="focus-ring bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-              >
-                <Briefcase className="h-4 w-4 mr-2" />
-                Convert to Operation
-              </Button>
-            )}
             {isTaskChanged() && (
               <Button onClick={handleSave} className="focus-ring">
                 <Save className="h-4 w-4 mr-2" />
@@ -508,27 +422,43 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
 
           <div className="flex-1 overflow-hidden">
             <Tabs defaultValue="details" className="h-full flex flex-col">
-              <TabsList className="grid w-full grid-cols-5 mb-6">
+              <TabsList className={`grid w-full mb-6`} style={{ gridTemplateColumns: `repeat(${visiblePanels.length}, minmax(0, 1fr))` }}>
+                {visiblePanels.includes("details") && (
                 <TabsTrigger value="details" className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
                   Details
                 </TabsTrigger>
+                )}
+                {visiblePanels.includes("scheduling") && isNextAction && (
                 <TabsTrigger value="scheduling" className="flex items-center gap-2">
                   <Calendar className="h-4 w-4" />
                   Scheduling
                 </TabsTrigger>
+                )}
+                {visiblePanels.includes("dependencies") && isNextAction && (
                 <TabsTrigger value="dependencies" className="flex items-center gap-2">
                   <Users className="h-4 w-4" />
                   Dependencies
                 </TabsTrigger>
+                )}
+                {visiblePanels.includes("subtasks") && (
                 <TabsTrigger value="subtasks" className="flex items-center gap-2">
                   <CheckCircle className="h-4 w-4" />
                   Subtasks
                 </TabsTrigger>
+                )}
+                {visiblePanels.includes("analysis") && isNextAction && (
                 <TabsTrigger value="analysis" className="flex items-center gap-2">
                   <Brain className="h-4 w-4" />
                   Analysis
                 </TabsTrigger>
+                )}
+                {visiblePanels.includes("time") && (
+                <TabsTrigger value="time" className="flex items-center gap-2">
+                  <Timer className="h-4 w-4" />
+                  Time
+                </TabsTrigger>
+                )}
               </TabsList>
 
               <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -550,6 +480,7 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                         />
                       </div>
 
+                      {isNextAction && (
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-3">
                           <Label htmlFor="estimated-duration" className="text-sm font-semibold flex items-center gap-2">
@@ -560,7 +491,7 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                             <Input
                               id="estimated-duration"
                               type="number"
-                              value={task.estimatedDuration}
+                              value={task.estimatedDuration ?? ""}
                               onChange={(e) =>
                                 setTask({ ...task, estimatedDuration: Number.parseInt(e.target.value) || 0 })
                               }
@@ -580,7 +511,7 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                           <Input
                             id="reward-value"
                             type="number"
-                            value={task.rewardValue}
+                            value={task.rewardValue ?? ""}
                             onChange={(e) => setTask({ ...task, rewardValue: Number.parseInt(e.target.value) || 0 })}
                             className="focus-ring"
                           />
@@ -629,6 +560,18 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                             </SelectContent>
                           </Select>
                         </div>
+                      </div>
+                      )}
+
+                      <div className="flex items-center justify-between rounded-lg border p-3">
+                        <div>
+                          <Label className="text-sm font-semibold">Show in Scheduler</Label>
+                          <p className="text-xs text-muted-foreground">Include this item in the Scheduler panel.</p>
+                        </div>
+                        <Switch
+                          checked={task.scheduleable !== false}
+                          onCheckedChange={(checked) => setTask({ ...task, scheduleable: checked })}
+                        />
                       </div>
 
                       {/* Repeated Task Settings */}
@@ -766,7 +709,7 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
 
                     <div className="space-y-6">
                       <div className="space-y-3">
-                        <Label className="text-sm font-semibold">Categories</Label>
+                        <Label className="text-sm font-semibold">Lists</Label>
                         <div className="flex flex-wrap gap-2">
                           {task.categories?.map((categoryId) => {
                             const category = categories.find((c) => c.id === categoryId)
@@ -795,11 +738,11 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                         <div className="space-y-2">
                           <Select onValueChange={addToCategory} value="none">
                             <SelectTrigger className="focus-ring">
-                              <SelectValue placeholder="Add to category" />
+                              <SelectValue placeholder="Add to list" />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none" disabled>
-                                Select a category
+                                Select a list
                               </SelectItem>
                               {categories
                                 .filter((category) => !task.categories?.includes(category.id))
@@ -816,6 +759,43 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                                 ))}
                             </SelectContent>
                           </Select>
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-3">
+                        <h3 className="font-semibold text-sm">Attributes</h3>
+                        <AttributeValuesEditor
+                          definitions={mergeListAttributes(categories, task.categories)}
+                          values={task.attributes || {}}
+                          onChange={(attributes) => setTask({ ...task, attributes })}
+                        />
+                        <div className="flex gap-2 items-end">
+                          <div className="flex-1">
+                            <Label className="text-xs">Custom attribute name</Label>
+                            <Input value={newAttrName} onChange={(e) => setNewAttrName(e.target.value)} placeholder="e.g. ISBN" />
+                          </div>
+                          <div className="flex-1">
+                            <Label className="text-xs">Value</Label>
+                            <Input value={newAttrValue} onChange={(e) => setNewAttrValue(e.target.value)} placeholder="Value" />
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!newAttrName.trim()}
+                            onClick={() => {
+                              const id = `custom_${newAttrName.toLowerCase().replace(/\s+/g, "_")}`
+                              setTask({
+                                ...task,
+                                attributes: { ...(task.attributes || {}), [id]: newAttrValue },
+                              })
+                              setNewAttrName("")
+                              setNewAttrValue("")
+                            }}
+                          >
+                            Add
+                          </Button>
                         </div>
                       </div>
 
@@ -856,6 +836,20 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
 
                 <TabsContent value="scheduling" className="space-y-6 mt-0">
                   <div className="space-y-8">
+                    {task.scheduledDate && !task.scheduledWeek && (
+                      <div className="flex items-center justify-between gap-3 p-4 rounded-lg border bg-blue-50/60 border-blue-200">
+                        <div>
+                          <p className="font-semibold text-sm">On daily to-do list</p>
+                          <p className="text-xs text-muted-foreground">
+                            Move this task to the weekly to-do list instead of today.
+                          </p>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={handleMoveToWeeklyTodo}>
+                          <ArrowRight className="h-4 w-4 mr-1" />
+                          Move to Weekly
+                        </Button>
+                      </div>
+                    )}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="space-y-6">
                         <div className="space-y-4 p-4 bg-muted/30 rounded-lg border">
@@ -1140,10 +1134,10 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                       </div>
 
                       <div className="space-y-2">
-                        {task.dependencies.length === 0 ? (
+                        {(task.dependencies ?? []).length === 0 ? (
                           <p className="text-sm text-muted-foreground italic">No dependencies set</p>
                         ) : (
-                          task.dependencies.map((depId) => {
+                          (task.dependencies ?? []).map((depId) => {
                             const depTask = allTasks.find((t) => t.id === depId)
                             if (!depTask) return null
 
@@ -1315,6 +1309,44 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
                     </div>
                   </div>
                 </TabsContent>
+
+                {visiblePanels.includes("time") && (
+                <TabsContent value="time" className="space-y-6 mt-0">
+                  <div className="space-y-4 p-4 bg-muted/30 rounded-lg border">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <Timer className="h-4 w-4" />
+                      Estimated vs actual time
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Estimated (plan)</Label>
+                        <Input
+                          type="number"
+                          value={task.estimatedDuration ?? ""}
+                          onChange={(e) =>
+                            setTask({ ...task, estimatedDuration: Number.parseInt(e.target.value) || undefined })
+                          }
+                          placeholder="minutes"
+                        />
+                      </div>
+                      <div>
+                        <Label>Actual (logged total)</Label>
+                        <Input type="number" value={task.actualDuration ?? ""} readOnly className="bg-muted" />
+                      </div>
+                    </div>
+                    {(task.timeLogs?.length ?? 0) > 0 && (
+                      <ul className="text-sm space-y-1">
+                        {task.timeLogs!.map((log) => (
+                          <li key={log.id} className="flex justify-between border-b py-1">
+                            <span>{log.durationMinutes}m{log.location ? ` @ ${log.location}` : ""}{log.notes ? ` — ${log.notes}` : ""}</span>
+                            <span className="text-muted-foreground">{log.date}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </TabsContent>
+                )}
               </div>
             </Tabs>
           </div>
@@ -1329,12 +1361,6 @@ export function TaskDetailPopup({ taskId, open, onClose }: TaskDetailPopupProps)
         onComplete={handleComplete}
       />
 
-      {/* Convert to Operation Dialog */}
-      <ConvertToOperationDialog
-        open={showConvertDialog}
-        onClose={() => setShowConvertDialog(false)}
-        onConvert={handleConvertToOperation}
-      />
     </>
   )
 }

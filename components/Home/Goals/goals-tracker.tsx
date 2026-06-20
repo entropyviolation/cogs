@@ -1,3 +1,6 @@
+/**
+ * components/Home/Goals/goals-tracker.tsx — Goals with persistence & points
+ */
 "use client"
 
 import { useState } from "react"
@@ -7,95 +10,49 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Target, Plus, CheckCircle2, Book, Waves, Trophy } from "lucide-react"
+import { Target, Plus, CheckCircle2, Book, Waves, Trophy, Pencil, Trash2 } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-interface Goal {
-  id: string
-  title: string
-  type: "numerical" | "boolean" | "count"
-  target: number
-  current: number
-  period: "week" | "month" | "year"
-  category: string
-  deadline?: Date
-  completed: boolean
-}
+import { Textarea } from "@/components/ui/textarea"
+import { useGoalsStore } from "@/lib/goals-store"
+import type { Goal } from "@/lib/types"
 
 export function GoalsTracker() {
-  const [goals, setGoals] = useState<Goal[]>([
-    {
-      id: "1",
-      title: "Read 7 books",
-      type: "count",
-      target: 7,
-      current: 3,
-      period: "month",
-      category: "Learning",
-      completed: false,
-    },
-    {
-      id: "2",
-      title: "Surf 10 times",
-      type: "count",
-      target: 10,
-      current: 6,
-      period: "month",
-      category: "Health",
-      completed: false,
-    },
-    {
-      id: "3",
-      title: "Finish Allieprime project",
-      type: "boolean",
-      target: 1,
-      current: 0,
-      period: "week",
-      category: "Work",
-      completed: false,
-    },
-  ])
+  const goals = useGoalsStore((s) => s.goals)
+  const addGoal = useGoalsStore((s) => s.addGoal)
+  const updateGoal = useGoalsStore((s) => s.updateGoal)
+  const deleteGoal = useGoalsStore((s) => s.deleteGoal)
+  const setProgress = useGoalsStore((s) => s.setProgress)
 
   const [showAddGoal, setShowAddGoal] = useState(false)
-  const [newGoal, setNewGoal] = useState({
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null)
+  const [newGoal, setNewGoal] = useState<{
+    title: string
+    description: string
+    type: Goal["type"]
+    target: number
+    period: Goal["period"]
+    category: string
+    points: number
+  }>({
     title: "",
+    description: "",
     type: "count" as const,
     target: 1,
     period: "month" as const,
     category: "Personal",
+    points: 25,
   })
 
   const handleAddGoal = () => {
-    const goal: Goal = {
-      id: Date.now().toString(),
-      ...newGoal,
-      current: 0,
-      completed: false,
-    }
-    setGoals([...goals, goal])
-    setNewGoal({
-      title: "",
-      type: "count",
-      target: 1,
-      period: "month",
-      category: "Personal",
-    })
+    if (!newGoal.title.trim()) return
+    addGoal(newGoal)
+    setNewGoal({ title: "", description: "", type: "count", target: 1, period: "month", category: "Personal", points: 25 })
     setShowAddGoal(false)
   }
 
-  const updateGoalProgress = (goalId: string, newCurrent: number) => {
-    setGoals(
-      goals.map((goal) =>
-        goal.id === goalId ? { ...goal, current: newCurrent, completed: newCurrent >= goal.target } : goal,
-      ),
-    )
-  }
-
-  const getGoalsByPeriod = (period: "week" | "month" | "year") => {
-    return goals.filter((goal) => goal.period === period)
-  }
+  const getGoalsByPeriod = (period: Goal["period"]) => goals.filter((g) => g.period === period)
 
   const getGoalIcon = (category: string) => {
     switch (category.toLowerCase()) {
@@ -126,13 +83,20 @@ export function GoalsTracker() {
   const renderGoalCard = (goal: Goal) => (
     <Card key={goal.id} className="card-hover">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {getGoalIcon(goal.category)}
-            <CardTitle className="text-lg">{goal.title}</CardTitle>
+            <CardTitle className="text-lg truncate">{goal.title}</CardTitle>
           </div>
-          <Badge className={getCategoryColor(goal.category)}>{goal.category}</Badge>
+          <div className="flex items-center gap-1 shrink-0">
+            <Badge variant="outline">{goal.points} pts</Badge>
+            <Badge className={getCategoryColor(goal.category)}>{goal.category}</Badge>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditingGoal(goal)}>
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
+        {goal.description && <p className="text-sm text-muted-foreground mt-1">{goal.description}</p>}
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
@@ -143,35 +107,33 @@ export function GoalsTracker() {
               {goal.type === "count" && " items"}
             </span>
           </div>
-
-          <Progress value={(goal.current / goal.target) * 100} className="h-3" />
-
-          {goal.type === "count" && !goal.completed && (
+          <Progress value={Math.min(100, (goal.current / Math.max(goal.target, 1)) * 100)} className="h-3" />
+          {(goal.type === "count" || goal.type === "numerical") && !goal.completed && (
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => updateGoalProgress(goal.id, Math.max(0, goal.current - 1))}
-              >
+              <Button size="sm" variant="outline" onClick={() => setProgress(goal.id, Math.max(0, goal.current - 1))}>
                 -1
               </Button>
-              <Button size="sm" onClick={() => updateGoalProgress(goal.id, goal.current + 1)}>
+              <Button size="sm" onClick={() => setProgress(goal.id, goal.current + 1)}>
                 +1
               </Button>
+              <Input
+                type="number"
+                className="h-8 w-20"
+                value={goal.current}
+                onChange={(e) => setProgress(goal.id, Number.parseInt(e.target.value) || 0)}
+              />
             </div>
           )}
-
           {goal.type === "boolean" && !goal.completed && (
-            <Button className="w-full" onClick={() => updateGoalProgress(goal.id, 1)}>
+            <Button className="w-full" onClick={() => setProgress(goal.id, 1)}>
               <CheckCircle2 className="h-4 w-4 mr-2" />
-              Mark Complete
+              Mark Complete (+{goal.points} pts)
             </Button>
           )}
-
           {goal.completed && (
             <div className="flex items-center gap-2 text-green-600">
               <CheckCircle2 className="h-4 w-4" />
-              <span className="font-medium">Completed!</span>
+              <span className="font-medium">Completed — {goal.points} points earned</span>
             </div>
           )}
         </div>
@@ -179,148 +141,143 @@ export function GoalsTracker() {
     </Card>
   )
 
+  const goalForm = (
+    fields: {
+      title: string
+      description: string
+      type: Goal["type"]
+      target: number
+      period: Goal["period"]
+      category: string
+      points: number
+    },
+    onChange: (v: typeof fields) => void,
+    onSubmit: () => void,
+    submitLabel: string,
+  ) => (
+    <div className="space-y-4">
+      <div>
+        <Label>Goal Title</Label>
+        <Input value={fields.title} onChange={(e) => onChange({ ...fields, title: e.target.value })} placeholder="e.g., Read 5 books" />
+      </div>
+      <div>
+        <Label>Description</Label>
+        <Textarea value={fields.description} onChange={(e) => onChange({ ...fields, description: e.target.value })} rows={2} />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Type</Label>
+          <Select value={fields.type} onValueChange={(v) => onChange({ ...fields, type: v as typeof fields.type })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="count">Count</SelectItem>
+              <SelectItem value="boolean">Yes/No</SelectItem>
+              <SelectItem value="numerical">Numerical</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Target</Label>
+          <Input type="number" value={fields.target} onChange={(e) => onChange({ ...fields, target: Number.parseInt(e.target.value) || 1 })} />
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div>
+          <Label>Period</Label>
+          <Select value={fields.period} onValueChange={(v) => onChange({ ...fields, period: v as typeof fields.period })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="week">Week</SelectItem>
+              <SelectItem value="month">Month</SelectItem>
+              <SelectItem value="year">Year</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Category</Label>
+          <Select value={fields.category} onValueChange={(v) => onChange({ ...fields, category: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="Learning">Learning</SelectItem>
+              <SelectItem value="Health">Health</SelectItem>
+              <SelectItem value="Work">Work</SelectItem>
+              <SelectItem value="Personal">Personal</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Points reward</Label>
+          <Input type="number" value={fields.points} onChange={(e) => onChange({ ...fields, points: Number.parseInt(e.target.value) || 0 })} />
+        </div>
+      </div>
+      <Button onClick={onSubmit} className="w-full">{submitLabel}</Button>
+    </div>
+  )
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold">Goals & Targets</h2>
-          <p className="text-muted-foreground">Track your specific, measurable objectives</p>
+          <p className="text-muted-foreground">Specific objectives with point rewards — saved automatically</p>
         </div>
-
         <Dialog open={showAddGoal} onOpenChange={setShowAddGoal}>
           <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Goal
-            </Button>
+            <Button><Plus className="h-4 w-4 mr-2" />Add Goal</Button>
           </DialogTrigger>
           <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Goal</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="goal-title">Goal Title</Label>
-                <Input
-                  id="goal-title"
-                  value={newGoal.title}
-                  onChange={(e) => setNewGoal({ ...newGoal, title: e.target.value })}
-                  placeholder="e.g., Read 5 books"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="goal-type">Type</Label>
-                  <Select value={newGoal.type} onValueChange={(value: any) => setNewGoal({ ...newGoal, type: value })}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="count">Count</SelectItem>
-                      <SelectItem value="boolean">Yes/No</SelectItem>
-                      <SelectItem value="numerical">Numerical</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="goal-target">Target</Label>
-                  <Input
-                    id="goal-target"
-                    type="number"
-                    value={newGoal.target}
-                    onChange={(e) => setNewGoal({ ...newGoal, target: Number.parseInt(e.target.value) || 1 })}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="goal-period">Period</Label>
-                  <Select
-                    value={newGoal.period}
-                    onValueChange={(value: any) => setNewGoal({ ...newGoal, period: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="week">Week</SelectItem>
-                      <SelectItem value="month">Month</SelectItem>
-                      <SelectItem value="year">Year</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label htmlFor="goal-category">Category</Label>
-                  <Select
-                    value={newGoal.category}
-                    onValueChange={(value) => setNewGoal({ ...newGoal, category: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Learning">Learning</SelectItem>
-                      <SelectItem value="Health">Health</SelectItem>
-                      <SelectItem value="Work">Work</SelectItem>
-                      <SelectItem value="Personal">Personal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Button onClick={handleAddGoal} className="w-full">
-                Add Goal
-              </Button>
-            </div>
+            <DialogHeader><DialogTitle>Add New Goal</DialogTitle></DialogHeader>
+            {goalForm(newGoal, setNewGoal, handleAddGoal, "Add Goal")}
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* Goals by period */}
+      {editingGoal && (
+        <Dialog open onOpenChange={() => setEditingGoal(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Edit Goal</DialogTitle></DialogHeader>
+            {goalForm(
+              {
+                title: editingGoal.title,
+                description: editingGoal.description || "",
+                type: editingGoal.type,
+                target: editingGoal.target,
+                period: editingGoal.period,
+                category: editingGoal.category,
+                points: editingGoal.points,
+              },
+              (v) => setEditingGoal({ ...editingGoal, ...v }),
+              () => {
+                updateGoal(editingGoal)
+                setEditingGoal(null)
+              },
+              "Save Changes",
+            )}
+            <Button variant="destructive" className="w-full mt-2" onClick={() => { deleteGoal(editingGoal.id); setEditingGoal(null) }}>
+              <Trash2 className="h-4 w-4 mr-2" />Delete Goal
+            </Button>
+          </DialogContent>
+        </Dialog>
+      )}
+
       <Tabs defaultValue="month" className="w-full">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="week">This Week</TabsTrigger>
           <TabsTrigger value="month">This Month</TabsTrigger>
           <TabsTrigger value="year">This Year</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="week" className="mt-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {getGoalsByPeriod("week").map(renderGoalCard)}
-            {getGoalsByPeriod("week").length === 0 && (
-              <div className="col-span-full text-center py-8 text-muted-foreground">
-                No weekly goals set. Add one to get started!
-              </div>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="month" className="mt-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {getGoalsByPeriod("month").map(renderGoalCard)}
-            {getGoalsByPeriod("month").length === 0 && (
-              <div className="col-span-full text-center py-8 text-muted-foreground">
-                No monthly goals set. Add one to get started!
-              </div>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="year" className="mt-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {getGoalsByPeriod("year").map(renderGoalCard)}
-            {getGoalsByPeriod("year").length === 0 && (
-              <div className="col-span-full text-center py-8 text-muted-foreground">
-                No yearly goals set. Add one to get started!
-              </div>
-            )}
-          </div>
-        </TabsContent>
+        {(["week", "month", "year"] as const).map((period) => (
+          <TabsContent key={period} value={period} className="mt-6">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {getGoalsByPeriod(period).map(renderGoalCard)}
+              {getGoalsByPeriod(period).length === 0 && (
+                <div className="col-span-full text-center py-8 text-muted-foreground">
+                  No {period}ly goals set. Add one to get started!
+                </div>
+              )}
+            </div>
+          </TabsContent>
+        ))}
       </Tabs>
     </div>
   )

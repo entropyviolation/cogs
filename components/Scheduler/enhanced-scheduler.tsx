@@ -1,8 +1,18 @@
+/**
+ * components/Scheduler/enhanced-scheduler.tsx — Scheduler period funnel
+ *
+ * The progressive-refinement scheduler: a "Scheduler Inbox" of to-schedule tasks
+ * plus period buckets (Always → Year → Month → Week → Day). Dragging a task down
+ * a level refines its scheduling fields on the task store.
+ *
+ * Spec: §7.1–7.2 (period funnel). Auto-scheduling (§7.6) and carry-over (§7.7)
+ * are deferred/not built — see docs/SPEC_MAPPING.md §7.
+ */
 "use client"
 
 import type React from "react"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo } from "react"
 import { useTaskStore } from "@/lib/task-store"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,7 +34,17 @@ import {
   Home,
 } from "lucide-react"
 import type { Task, SchedulePeriod } from "@/lib/types"
-import { safeToDate, formatWeekRange, getWeekString, parseWeekString } from "@/lib/date-utils"
+import {
+  formatWeekRange,
+  getWeekString,
+  parseWeekString,
+  parseLocalDate,
+  taskScheduledOnDay,
+  taskScheduledInWeek,
+  taskScheduledInMonth,
+  taskScheduledInYear,
+} from "@/lib/date-utils"
+import { taskBelongsInOverviewBox } from "@/lib/item-utils"
 import { TaskDetailPopup } from "@/components/task-detail-popup"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Filter, ChevronDown } from "lucide-react"
@@ -44,13 +64,30 @@ export function EnhancedScheduler() {
   const [sortBy, setSortBy] = useState<"category" | "duration" | "importance" | "deadline" | "reward">("importance")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
 
+  // IDs of lists (categories) marked scheduleable. A list is scheduleable
+  // unless explicitly turned off, so older lists without the flag still appear.
+  const scheduleableCategoryIds = useMemo(
+    () => new Set(categories.filter((c) => c.scheduleable !== false).map((c) => c.id)),
+    [categories],
+  )
+
+  // A task is shown in the Scheduler only if it belongs to one or more
+  // scheduleable lists.
+  const isTaskScheduleable = useCallback(
+    (task: Task) => task.categories?.some((catId) => scheduleableCategoryIds.has(catId)) ?? false,
+    [scheduleableCategoryIds],
+  )
+
   // Get available tasks (no unmet dependencies, not completed, not scheduled)
   const getAvailableTasks = useCallback(() => {
     let tasks = allTasks.filter((task) => {
       if (task.completed) return false
 
+      // Only surface items that belong to a scheduleable list
+      if (!isTaskScheduleable(task)) return false
+
       // Check if all dependencies are completed
-      const hasUnmetDependencies = task.dependencies.some((depId) => {
+      const hasUnmetDependencies = (task.dependencies ?? []).some((depId) => {
         const depTask = allTasks.find((t) => t.id === depId)
         return depTask && !depTask.completed
       })
@@ -108,7 +145,7 @@ export function EnhancedScheduler() {
     })
 
     return tasks
-  }, [allTasks, activeTab, selectedCategories, sortBy, sortOrder, categories])
+  }, [allTasks, activeTab, selectedCategories, sortBy, sortOrder, categories, isTaskScheduleable])
 
   // Get tasks for specific scheduling periods
   const getTasksForPeriod = useCallback(
@@ -137,11 +174,7 @@ export function EnhancedScheduler() {
             return false
           })
         case "day":
-          return availableTasks.filter((task) => {
-            const taskDate = safeToDate(task.scheduledDate)
-            const compareDate = safeToDate(value || currentDate)
-            return taskDate && compareDate && taskDate.toDateString() === compareDate.toDateString()
-          })
+          return availableTasks.filter((task) => taskScheduledOnDay(task, value || currentDate))
         default:
           return availableTasks.filter(
             (task) => !task.scheduledYear && !task.scheduledMonth && !task.scheduledWeek && !task.scheduledDate,
@@ -149,6 +182,31 @@ export function EnhancedScheduler() {
       }
     },
     [allTasks, currentDate],
+  )
+
+  // Tasks shown in the "Always" tab overview boxes (This Year / This Month /
+  // This Week / Today ...). Unlike getTasksForPeriod these boxes nest: a task
+  // placed on a specific day also appears in its week, month and year box, so
+  // the overview stays consistent with the To-Do/Plan day-week-month views.
+  const getTasksForOverviewBox = useCallback(
+    (period: SchedulePeriod, value: string) => {
+      const tasks = allTasks.filter((task) => !task.completed)
+      switch (period) {
+        case "year":
+          return tasks.filter((task) => taskScheduledInYear(task, value))
+        case "month":
+          return tasks.filter((task) => taskScheduledInMonth(task, value))
+        case "week":
+          return tasks.filter((task) => taskScheduledInWeek(task, value))
+        case "day":
+          return tasks.filter((task) => taskScheduledOnDay(task, value))
+        default:
+          return tasks.filter(
+            (task) => !task.scheduledYear && !task.scheduledMonth && !task.scheduledWeek && !task.scheduledDate,
+          )
+      }
+    },
+    [allTasks],
   )
 
   // Schedule tasks to a specific period
@@ -177,7 +235,7 @@ export function EnhancedScheduler() {
               updates.scheduledWeek = value
               break
             case "day":
-              updates.scheduledDate = new Date(value)
+              updates.scheduledDate = parseLocalDate(value) ?? new Date(value)
               break
           }
 
@@ -370,6 +428,60 @@ export function EnhancedScheduler() {
     return days
   }
 
+  // Current-period keys, used to highlight "the current cell" in the grids so
+  // the current week reads inside the Month view exactly like the current month
+  // reads inside the Year view.
+  const todayKey = new Date().toISOString().slice(0, 10)
+  const currentMonthKey = new Date().toISOString().slice(0, 7)
+  const currentWeekKey = getWeekString(new Date())
+
+  // The "Always" overview boxes. A day-scheduled task is technically also in its
+  // week/month/year, but here each task is shown exactly once — in the most
+  // specific box it qualifies for (day → week → month → year).
+  const overviewBoxes = useMemo<{ label: string; period: SchedulePeriod; value: string }[]>(() => {
+    const nextMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1).toISOString().slice(0, 7)
+    const nextWeek = new Date(currentDate)
+    nextWeek.setDate(currentDate.getDate() + 7)
+    const tomorrow = new Date(currentDate)
+    tomorrow.setDate(currentDate.getDate() + 1)
+    return [
+      { label: "This Year", period: "year" as SchedulePeriod, value: getCurrentYear() },
+      { label: "This Month", period: "month" as SchedulePeriod, value: getCurrentMonth() },
+      { label: "Next Month", period: "month" as SchedulePeriod, value: nextMonth },
+      { label: "This Week", period: "week" as SchedulePeriod, value: getCurrentWeek() },
+      { label: "Next Week", period: "week" as SchedulePeriod, value: getWeekString(nextWeek) },
+      { label: "Today", period: "day" as SchedulePeriod, value: currentDate.toISOString().slice(0, 10) },
+      { label: "Tomorrow", period: "day" as SchedulePeriod, value: tomorrow.toISOString().slice(0, 10) },
+    ]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDate])
+
+  const periodRank: Record<SchedulePeriod, number> = { always: 0, year: 1, month: 2, week: 3, day: 4 }
+
+  const boxMatchesTask = useCallback((task: Task, period: SchedulePeriod, value: string) => {
+    if (period === "always") return false
+    return taskBelongsInOverviewBox(task, period as "year" | "month" | "week" | "day", value)
+  }, [])
+
+  // Assign each task to a single box (the most specific match).
+  const overviewAssignments = useMemo(() => {
+    const map: Record<string, Task[]> = {}
+    overviewBoxes.forEach((b) => (map[b.label] = []))
+    allTasks
+      .filter((t) => !t.completed)
+      .forEach((task) => {
+        let best: { label: string; period: SchedulePeriod; value: string } | null = null
+        for (const b of overviewBoxes) {
+          if (boxMatchesTask(task, b.period, b.value)) {
+            if (!best || periodRank[b.period] > periodRank[best.period]) best = b
+          }
+        }
+        if (best) map[best.label].push(task)
+      })
+    return map
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allTasks, overviewBoxes, boxMatchesTask])
+
   // Task component
   const TaskItem = ({
     task,
@@ -497,7 +609,7 @@ export function EnhancedScheduler() {
                       </CollapsibleTrigger>
                       <CollapsibleContent className="space-y-4 pt-3">
                         <div className="space-y-2">
-                          <Label className="text-xs font-medium">Filter by Categories</Label>
+                          <Label className="text-xs font-medium">Filter by Lists</Label>
                           <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
                             <div className="flex items-center space-x-2">
                               <Checkbox
@@ -510,10 +622,12 @@ export function EnhancedScheduler() {
                                 }}
                               />
                               <Label htmlFor="all-categories" className="text-sm">
-                                All categories
+                                All lists
                               </Label>
                             </div>
-                            {categories.map((category) => (
+                            {categories
+                              .filter((category) => scheduleableCategoryIds.has(category.id))
+                              .map((category) => (
                               <div key={category.id} className="flex items-center space-x-2">
                                 <Checkbox
                                   id={`category-${category.id}`}
@@ -547,7 +661,7 @@ export function EnhancedScheduler() {
                                 <SelectItem value="duration">Duration</SelectItem>
                                 <SelectItem value="deadline">Deadline</SelectItem>
                                 <SelectItem value="reward">Reward</SelectItem>
-                                <SelectItem value="category">Category</SelectItem>
+                                <SelectItem value="category">List</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -576,69 +690,44 @@ export function EnhancedScheduler() {
             </div>
 
             <div className="col-span-3">
+              <p className="text-xs text-muted-foreground mb-2">
+                Each task appears once, in its most specific period (day → week → month → year).
+              </p>
               <div className="grid grid-cols-2 gap-4">
-                {[
-                  { label: "This Year", period: "year" as SchedulePeriod, value: getCurrentYear() },
-                  { label: "This Month", period: "month" as SchedulePeriod, value: getCurrentMonth() },
-                  {
-                    label: "Next Month",
-                    period: "month" as SchedulePeriod,
-                    value: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1).toISOString().slice(0, 7),
-                  },
-                  { label: "This Week", period: "week" as SchedulePeriod, value: getCurrentWeek() },
-                  {
-                    label: "Next Week",
-                    period: "week" as SchedulePeriod,
-                    value: (() => {
-                      const nextWeek = new Date(currentDate)
-                      nextWeek.setDate(currentDate.getDate() + 7)
-                      return getWeekString(nextWeek)
-                    })(),
-                  },
-                  { label: "Today", period: "day" as SchedulePeriod, value: currentDate.toISOString().slice(0, 10) },
-                  {
-                    label: "Tomorrow",
-                    period: "day" as SchedulePeriod,
-                    value: (() => {
-                      const tomorrow = new Date(currentDate)
-                      tomorrow.setDate(currentDate.getDate() + 1)
-                      return tomorrow.toISOString().slice(0, 10)
-                    })(),
-                  },
-                ].map((box) => (
-                  <Card
-                    key={box.label}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => handleDrop(e, box.period, box.value)}
-                    onClick={() => {
-                      if (selectedTasks.size > 0) {
-                        scheduleTasksToPeriod(Array.from(selectedTasks), box.period, box.value)
-                      }
-                    }}
-                  >
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">{box.label}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1">
-                      {getTasksForPeriod(box.period, box.value)
-                        .slice(0, 3)
-                        .map((task) => (
-                          <TaskItem
-                            key={task.id}
-                            task={task}
-                            showUnschedule
-                            onClick={() => setSelectedTaskId(task.id)}
-                          />
+                {overviewBoxes.map((box) => {
+                  const boxTasks = overviewAssignments[box.label] || []
+                  return (
+                    <Card
+                      key={box.label}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => handleDrop(e, box.period, box.value)}
+                      onClick={() => {
+                        if (selectedTasks.size > 0) {
+                          scheduleTasksToPeriod(Array.from(selectedTasks), box.period, box.value)
+                        }
+                      }}
+                    >
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center justify-between">
+                          {box.label}
+                          <Badge variant="outline" className="text-xs font-normal">
+                            {boxTasks.length}
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-1">
+                        {boxTasks.slice(0, 3).map((task) => (
+                          <TaskItem key={task.id} task={task} showUnschedule onClick={() => setSelectedTaskId(task.id)} />
                         ))}
-                      {getTasksForPeriod(box.period, box.value).length > 3 && (
-                        <div className="text-xs text-muted-foreground">
-                          +{getTasksForPeriod(box.period, box.value).length - 3} more
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
+                        {boxTasks.length > 3 && (
+                          <div className="text-xs text-muted-foreground">+{boxTasks.length - 3} more</div>
+                        )}
+                        {boxTasks.length === 0 && <div className="text-xs text-muted-foreground italic">Empty</div>}
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -670,7 +759,9 @@ export function EnhancedScheduler() {
                 {getMonths().map((month) => (
                   <Card
                     key={month.value}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/50 ${
+                      month.value === currentMonthKey ? "ring-2 ring-primary" : ""
+                    }`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleDrop(e, "month", month.value)}
                     onClick={() => {
@@ -680,7 +771,14 @@ export function EnhancedScheduler() {
                     }}
                   >
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">{month.label}</CardTitle>
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        {month.label}
+                        {month.value === currentMonthKey && (
+                          <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                            Current
+                          </Badge>
+                        )}
+                      </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1">
                       {getTasksForPeriod("month", month.value)
@@ -732,7 +830,9 @@ export function EnhancedScheduler() {
                 {getWeeksInMonth(getCurrentMonth()).map((week) => (
                   <Card
                     key={week.value}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/50 ${
+                      week.value === currentWeekKey ? "ring-2 ring-primary" : ""
+                    }`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleDrop(e, "week", week.value)}
                     onClick={() => {
@@ -742,7 +842,14 @@ export function EnhancedScheduler() {
                     }}
                   >
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Week {week.label}</CardTitle>
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        Week {week.label}
+                        {week.value === currentWeekKey && (
+                          <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                            This Week
+                          </Badge>
+                        )}
+                      </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1">
                       {getTasksForPeriod("week", week.value)
@@ -794,7 +901,9 @@ export function EnhancedScheduler() {
                 {getDaysInWeek(getCurrentWeek()).map((day) => (
                   <Card
                     key={day.value}
-                    className="cursor-pointer hover:bg-muted/50"
+                    className={`cursor-pointer hover:bg-muted/50 ${
+                      day.value === todayKey ? "ring-2 ring-primary" : ""
+                    }`}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleDrop(e, "day", day.value)}
                     onClick={() => {
@@ -804,7 +913,14 @@ export function EnhancedScheduler() {
                     }}
                   >
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">{day.label}</CardTitle>
+                      <CardTitle className="text-sm flex items-center justify-between">
+                        {day.label}
+                        {day.value === todayKey && (
+                          <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                            Today
+                          </Badge>
+                        )}
+                      </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1">
                       {getTasksForPeriod("day", day.value)

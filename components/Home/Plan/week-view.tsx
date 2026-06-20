@@ -1,15 +1,19 @@
+/**
+ * components/Home/Plan/week-view.tsx — Week calendar view
+ */
 "use client"
 
 import type React from "react"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { ChevronLeft, ChevronRight, Clock, Edit3, Sparkles, MapPin } from "lucide-react"
 import { useTaskStore } from "@/lib/task-store"
 import { useEventStore } from "@/lib/event-store"
-import { formatDateKey, getWeekStartDate, getWeekDates } from "@/lib/date-utils"
+import { sameCalendarDay, toLocalCalendarDate, getWeekStartDate, getWeekDates, getWeekString } from "@/lib/date-utils"
+import { getStoredPlanText, saveStoredPlanText } from "@/lib/plan-text"
 import { format, addWeeks, subWeeks, isToday } from "date-fns"
 import type { CalendarEvent } from "@/lib/types"
 import { PlannedTasksSidebar } from "./planned-tasks-sidebar"
@@ -28,7 +32,6 @@ export function WeekView({
   currentDate,
   setCurrentDate,
   events,
-  setEvents,
   onTaskClick,
   onEventClick,
   onCreateEvent,
@@ -36,68 +39,32 @@ export function WeekView({
   const { tasks, updateTask } = useTaskStore()
   const { updateEvent } = useEventStore()
   const [weekPlan, setWeekPlan] = useState("")
-  const isUserEditing = useRef(false)
-  const weekStartRef = useRef("")
 
   const weekStart = getWeekStartDate(currentDate)
   const weekDates = getWeekDates(weekStart)
-  const weekKey = format(weekStart, "yyyy-'W'ww")
+  const weekKey = getWeekString(currentDate)
 
-  // Only load from localStorage when the week changes, not when typing
   useEffect(() => {
-    // Update the ref to track the current week
-    if (weekStartRef.current !== weekKey) {
-      weekStartRef.current = weekKey
-
-      // Only load from localStorage if user is not actively editing
-      if (!isUserEditing.current) {
-        const savedPlan = localStorage.getItem(`weekPlan-${weekKey}`)
-        console.log("Loading week plan from localStorage:", savedPlan)
-
-        if (savedPlan !== null) {
-          setWeekPlan(savedPlan)
-        } else {
-          setWeekPlan("")
-        }
-      }
-    }
+    setWeekPlan(getStoredPlanText("week", weekKey) ?? "")
   }, [weekKey])
 
-  // Save to localStorage when weekPlan changes, but don't trigger a re-render
-  useEffect(() => {
-    console.log("Saving week plan to localStorage:", weekPlan)
-    localStorage.setItem(`weekPlan-${weekKey}`, weekPlan)
-  }, [weekPlan, weekKey])
-
   const handleWeekPlanChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    isUserEditing.current = true
-    setWeekPlan(e.target.value)
-    // Reset the editing flag after a short delay
-    setTimeout(() => {
-      isUserEditing.current = false
-    }, 500)
+    const value = e.target.value
+    setWeekPlan(value)
+    saveStoredPlanText("week", weekKey, value)
   }
 
   const getScheduledTasks = (date: Date) => {
-    return tasks.filter((task) => {
-      if (!task.scheduledDate) return false
-
-      try {
-        const taskDate = task.scheduledDate instanceof Date ? task.scheduledDate : new Date(task.scheduledDate)
-        if (isNaN(taskDate.getTime())) return false
-
-        return formatDateKey(taskDate) === formatDateKey(date)
-      } catch {
-        return false
-      }
-    })
+    return tasks.filter((task) => task.scheduledDate && sameCalendarDay(task.scheduledDate, date))
   }
 
   const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
   }
 
   const onDrop = (e: React.DragEvent<HTMLDivElement>, date: Date, hour: number) => {
+    e.preventDefault()
     const taskId = e.dataTransfer.getData("taskId")
     const eventId = e.dataTransfer.getData("eventId")
 
@@ -109,28 +76,40 @@ export function WeekView({
           ...task,
           scheduledDate,
           scheduledTime: `${hour.toString().padStart(2, "0")}:00`,
+          scheduledWeek: undefined,
+          scheduledMonth: undefined,
+          scheduledYear: undefined,
         })
       }
     } else if (eventId) {
-      const event = events.find((e) => e.id === eventId)
+      const event = events.find((ev) => ev.id === eventId)
       if (event && !event.isAllDay) {
-        const updatedEvent = {
+        const durationMin = getEventDurationMinutes(event)
+        const endTotal = hour * 60 + durationMin
+        updateEvent({
           ...event,
-          date: new Date(date.getFullYear(), date.getMonth(), date.getDate()),
+          date: toLocalCalendarDate(date),
           startTime: `${hour.toString().padStart(2, "0")}:00`,
-          endTime: `${(hour + Math.ceil(getEventDurationMinutes(event) / 60)).toString().padStart(2, "0")}:00`,
-        }
-        updateEvent(updatedEvent)
+          endTime: `${Math.floor(endTotal / 60).toString().padStart(2, "0")}:${(endTotal % 60).toString().padStart(2, "0")}`,
+        })
       }
     }
   }
 
   const onTaskDragStart = (e: React.DragEvent<HTMLDivElement>, taskId: string) => {
     e.dataTransfer.setData("taskId", taskId)
+    e.dataTransfer.effectAllowed = "move"
   }
 
   const onEventDragStart = (e: React.DragEvent<HTMLDivElement>, eventId: string) => {
     e.dataTransfer.setData("eventId", eventId)
+    e.dataTransfer.effectAllowed = "move"
+  }
+
+  const handleUnscheduleTask = (taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId)
+    if (!task) return
+    updateTask({ ...task, scheduledDate: undefined, scheduledTime: undefined, scheduledWeek: getWeekString(currentDate) })
   }
 
   const getEventDurationMinutes = (event: CalendarEvent): number => {
@@ -141,78 +120,58 @@ export function WeekView({
 
   const getEventHeight = (event: CalendarEvent) => {
     const durationMinutes = getEventDurationMinutes(event)
-    return Math.max(60, (durationMinutes / 60) * 60) // 60px per hour
+    return Math.max(60, (durationMinutes / 60) * 60)
   }
 
-  const getTaskHeight = (task: any) => {
-    return Math.max(60, (task.estimatedDuration / 60) * 60) // 60px per hour
+  const getTaskHeight = (task: { estimatedDuration?: number }) => {
+    const mins = task.estimatedDuration ?? 30
+    return Math.max(60, (mins / 60) * 60)
   }
 
   const getAllDayEventsForDate = (date: Date) => {
-    return events.filter((event) => {
-      if (!event.isAllDay) return false
+    return events.filter((event) => event.isAllDay && sameCalendarDay(event.date, date))
+  }
 
-      try {
-        const eventDate = event.date instanceof Date ? event.date : new Date(event.date)
-        if (isNaN(eventDate.getTime())) return false
-
-        return formatDateKey(eventDate) === formatDateKey(date)
-      } catch {
-        return false
-      }
-    })
+  const getTimedEventsForSlot = (date: Date, hour: number) => {
+    return events.filter(
+      (event) =>
+        !event.isAllDay &&
+        sameCalendarDay(event.date, date) &&
+        Number.parseInt(event.startTime.split(":")[0]) === hour,
+    )
   }
 
   return (
     <div className="flex gap-6 h-full">
       <div className="w-80">
-        <PlannedTasksSidebar onTaskClick={onTaskClick} />
+        <PlannedTasksSidebar mode="week" currentDate={weekStart} onTaskClick={onTaskClick} onUnscheduleTask={handleUnscheduleTask} />
       </div>
 
       <div className="space-y-6 flex-1">
-        {/* Week navigation */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentDate(subWeeks(currentDate, 1))}
-              className="hover:bg-blue-50 hover:border-blue-200 transition-colors"
-            >
+            <Button variant="outline" size="icon" onClick={() => setCurrentDate(subWeeks(currentDate, 1))}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <h3 className="text-2xl font-bold bg-gradient-to-r from-slate-900 to-slate-600 bg-clip-text text-transparent">
               {format(weekStart, "MMM d")} - {format(weekDates[6], "MMM d, yyyy")}
             </h3>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setCurrentDate(addWeeks(currentDate, 1))}
-              className="hover:bg-blue-50 hover:border-blue-200 transition-colors"
-            >
+            <Button variant="outline" size="icon" onClick={() => setCurrentDate(addWeeks(currentDate, 1))}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          <Button
-            onClick={() => setCurrentDate(new Date())}
-            className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md"
-          >
+          <Button onClick={() => setCurrentDate(new Date())} className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md">
             Today
           </Button>
         </div>
 
-        <Card
-          className="shadow-xl border-0 bg-white/80 backdrop-blur-sm overflow-auto"
-          style={{ height: "calc(100vh - 400px)" }}
-        >
+        <Card className="shadow-xl border-0 bg-white/80 backdrop-blur-sm overflow-auto" style={{ height: "calc(100vh - 400px)" }}>
           <CardContent className="p-0">
             <div className="grid grid-cols-8 gap-0 border rounded-lg overflow-hidden">
-              {/* Time column header */}
               <div className="bg-gradient-to-b from-slate-50 to-white p-4 border-r border-slate-200 sticky top-0 z-10">
                 <span className="text-sm font-semibold text-slate-700">Time</span>
               </div>
 
-              {/* Day headers */}
               {weekDates.map((date, index) => (
                 <div
                   key={index}
@@ -228,8 +187,6 @@ export function WeekView({
                   >
                     {format(date, "d")}
                   </div>
-
-                  {/* All-day events banner */}
                   <div className="mt-2 space-y-1">
                     {getAllDayEventsForDate(date).map((event) => (
                       <div
@@ -246,23 +203,14 @@ export function WeekView({
                 </div>
               ))}
 
-              {/* Time slots */}
               {Array.from({ length: 24 }, (_, hour) => (
                 <div key={hour} className="contents">
-                  {/* Time label */}
                   <div className="p-3 border-r border-b border-slate-200 text-xs text-slate-500 bg-gradient-to-r from-slate-50 to-white">
                     {hour.toString().padStart(2, "0")}:00
                   </div>
 
-                  {/* Day columns */}
                   {weekDates.map((date, dayIndex) => {
-                    const dayEvents = events.filter(
-                      (event) =>
-                        !event.isAllDay &&
-                        formatDateKey(event.date) === formatDateKey(date) &&
-                        Number.parseInt(event.startTime.split(":")[0]) === hour,
-                    )
-
+                    const dayEvents = getTimedEventsForSlot(date, hour)
                     const dayTasks = getScheduledTasks(date).filter(
                       (task) => task.scheduledTime && Number.parseInt(task.scheduledTime.split(":")[0]) === hour,
                     )
@@ -277,15 +225,11 @@ export function WeekView({
                         onDrop={(e) => onDrop(e, date, hour)}
                         onClick={() => onCreateEvent(date, hour)}
                       >
-                        {/* Events */}
                         {dayEvents.map((event) => (
                           <div
                             key={event.id}
                             className="absolute inset-1 rounded-lg text-xs text-white p-2 cursor-pointer shadow-md hover:shadow-lg transition-shadow"
-                            style={{
-                              backgroundColor: event.color,
-                              height: `${getEventHeight(event)}px`,
-                            }}
+                            style={{ backgroundColor: event.color, height: `${getEventHeight(event)}px` }}
                             draggable
                             onDragStart={(e) => onEventDragStart(e, event.id)}
                             onClick={(e) => {
@@ -306,14 +250,13 @@ export function WeekView({
                           </div>
                         ))}
 
-                        {/* Tasks */}
-                        {dayTasks.map((task) => (
+                        {dayTasks.map((task, idx) => (
                           <div
                             key={task.id}
                             className="absolute inset-1 rounded-lg text-xs bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-800 p-2 cursor-pointer border border-emerald-200 shadow-md hover:shadow-lg transition-shadow"
                             style={{
                               height: `${getTaskHeight(task)}px`,
-                              top: `${dayEvents.length * 65 + 4}px`,
+                              top: `${dayEvents.length * 65 + idx * 4 + 4}px`,
                             }}
                             draggable
                             onDragStart={(e) => onTaskDragStart(e, task.id)}
@@ -338,7 +281,6 @@ export function WeekView({
           </CardContent>
         </Card>
 
-        {/* Week plan */}
         <Card className="shadow-xl border-0 bg-white/80 backdrop-blur-sm">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg flex items-center gap-2 text-slate-700">

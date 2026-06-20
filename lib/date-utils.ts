@@ -1,3 +1,14 @@
+/**
+ * lib/date-utils.ts — Date helpers (app-wide)
+ *
+ * Pure date utilities used throughout the app: safe parsing/formatting
+ * (`safe*`), YYYY-MM-DD keys (`formatDateKey`), week math
+ * (`getWeekStartDate`/`getWeekDates`), scheduler week-range strings
+ * (`getWeekString`/`parseWeekString`/`formatWeekRange`), display formatters,
+ * `getDayOfWeek`, and `isToday`.
+ *
+ * Spec: supports §7 (Scheduler week ranges) and §9 (habit grid dates).
+ */
 export function safeDateFormat(date: Date | string | undefined): string {
   if (!date) return "Not set"
 
@@ -46,12 +57,15 @@ export function formatWeekRange(startDate: Date): string {
   return `${startMonth}/${startDay}-${endMonth}/${endDay}`
 }
 
+/** Week range string using Monday as week start (matches getWeekStartDate). */
 export function getWeekString(date: Date): string {
-  const startOfWeek = new Date(date)
-  startOfWeek.setDate(date.getDate() - date.getDay())
-  const endOfWeek = new Date(startOfWeek)
-  endOfWeek.setDate(startOfWeek.getDate() + 6)
-  return `${startOfWeek.toISOString().slice(0, 10)}_${endOfWeek.toISOString().slice(0, 10)}`
+  const start = getWeekStartDate(date)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  end.setHours(0, 0, 0, 0)
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  return `${fmt(start)}_${fmt(end)}`
 }
 
 export function parseWeekString(weekString: string): { start: Date; end: Date } | null {
@@ -98,8 +112,27 @@ export function getWeekDates(startDate: Date): Date[] {
 /**
  * Formats a date as YYYY-MM-DD for use as a key in the data structure
  */
+/** Formats a date as YYYY-MM-DD (UTC-based; used for schedule keys). */
 export function formatDateKey(date: Date): string {
   return date.toISOString().split("T")[0]
+}
+
+/** Local calendar date key (YYYY-MM-DD) — avoids UTC drift for habit completions. */
+export function formatLocalDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+/** True when two values fall on the same local calendar day. */
+export function sameCalendarDay(a: Date | string | null | undefined, b: Date): boolean {
+  const da = parseLocalDate(a)
+  if (!da) return false
+  return formatLocalDateKey(da) === formatLocalDateKey(b)
+}
+
+/** Normalize any date value to local midnight on its calendar day. */
+export function toLocalCalendarDate(date: Date | string): Date {
+  const d = parseLocalDate(date) ?? (date instanceof Date ? date : new Date(date))
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate())
 }
 
 /**
@@ -151,4 +184,97 @@ export function isToday(date: Date): boolean {
     date.getMonth() === today.getMonth() &&
     date.getFullYear() === today.getFullYear()
   )
+}
+
+/**
+ * Minimal shape of the Scheduler's scheduling fields on a task. Kept loose so
+ * both the Scheduler and the To-Do/Plan panels can share period membership
+ * logic without depending on the full Task type.
+ */
+export interface SchedulableFields {
+  scheduledDate?: Date | string | null
+  scheduledWeek?: string | null
+  scheduledMonth?: string | null
+  scheduledYear?: string | null
+}
+
+/**
+ * The following helpers answer "is this task scheduled within this period?",
+ * honouring the most specific scheduling field set on the task. A task placed
+ * on a specific day also counts as scheduled in that week, month and year; a
+ * week-scheduled task counts within its month and year, etc. This keeps the
+ * Scheduler's funnel boxes and the To-Do/Plan day-week-month views in sync.
+ *
+ * `value` strings use the exact representations the Scheduler stores:
+ *   year  → "YYYY"
+ *   month → "YYYY-MM"   (ISO month slice)
+ *   week  → "YYYY-MM-DD_YYYY-MM-DD" (see getWeekString)
+ *   day   → a Date or ISO date string
+ */
+/**
+ * Parse a value to a Date using LOCAL time for bare "YYYY-MM-DD" strings.
+ * `new Date("2026-06-11")` is interpreted as UTC midnight, which lands on the
+ * previous calendar day in negative-offset timezones; this avoids that drift so
+ * day comparisons agree across the Scheduler and the To-Do/Plan panels.
+ */
+export function parseLocalDate(value: Date | string | null | undefined): Date | null {
+  if (!value) return null
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  return safeToDate(value)
+}
+
+export function taskScheduledOnDay(task: SchedulableFields, value: Date | string): boolean {
+  const taskDate = safeToDate(task.scheduledDate ?? undefined)
+  const compare = parseLocalDate(value)
+  if (taskDate && compare && taskDate.toDateString() === compare.toDateString()) return true
+  const deadline = safeToDate((task as { deadline?: Date | string }).deadline)
+  return !!deadline && !!compare && deadline.toDateString() === compare.toDateString()
+}
+
+export function taskScheduledInWeek(task: SchedulableFields, weekValue: string): boolean {
+  if (task.scheduledWeek && task.scheduledWeek === weekValue) return true
+  const taskDate = safeToDate(task.scheduledDate ?? undefined)
+  if (taskDate && getWeekString(taskDate) === weekValue) return true
+  const deadline = safeToDate((task as { deadline?: Date | string }).deadline)
+  if (deadline && getWeekString(deadline) === weekValue) return true
+  // A month-scheduled task surfaces in any week contained in that month.
+  if (task.scheduledMonth) {
+    const range = parseWeekString(weekValue)
+    if (range && range.start.toISOString().slice(0, 7) === task.scheduledMonth) return true
+  }
+  return false
+}
+
+export function taskScheduledInMonth(task: SchedulableFields, monthValue: string): boolean {
+  if (task.scheduledMonth && task.scheduledMonth === monthValue) return true
+  const taskDate = safeToDate(task.scheduledDate ?? undefined)
+  if (taskDate && taskDate.toISOString().slice(0, 7) === monthValue) return true
+  const deadline = safeToDate((task as { deadline?: Date | string }).deadline)
+  if (deadline && deadline.toISOString().slice(0, 7) === monthValue) return true
+  if (task.scheduledWeek) {
+    const range = parseWeekString(task.scheduledWeek)
+    if (range && range.start.toISOString().slice(0, 7) === monthValue) return true
+  }
+  return false
+}
+
+export function taskScheduledInYear(task: SchedulableFields, yearValue: string): boolean {
+  if (task.scheduledYear && task.scheduledYear === yearValue) return true
+  const taskDate = safeToDate(task.scheduledDate ?? undefined)
+  if (taskDate && taskDate.getFullYear().toString() === yearValue) return true
+  const deadline = safeToDate((task as { deadline?: Date | string }).deadline)
+  if (deadline && deadline.getFullYear().toString() === yearValue) return true
+  if (task.scheduledMonth && task.scheduledMonth.slice(0, 4) === yearValue) return true
+  if (task.scheduledYear === undefined && task.scheduledWeek) {
+    const range = parseWeekString(task.scheduledWeek)
+    if (range && range.start.getFullYear().toString() === yearValue) return true
+  }
+  return false
+}
+
+/** True when a task has no scheduling assignment at all. */
+export function taskHasNoSchedule(task: SchedulableFields): boolean {
+  return !task.scheduledYear && !task.scheduledMonth && !task.scheduledWeek && !task.scheduledDate
 }

@@ -1,3 +1,6 @@
+/**
+ * components/quick-add.tsx — Quick Add capture
+ */
 "use client"
 
 import type React from "react"
@@ -19,17 +22,17 @@ import { useTaskStore } from "@/lib/task-store"
 
 export function QuickAdd() {
   const [open, setOpen] = useState(false)
-  const [taskText, setTaskText] = useState("")
+  const [ideaText, setIdeaText] = useState("")
   const addTask = useTaskStore((state) => state.addTask)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (taskText.trim()) {
+    if (ideaText.trim()) {
       addTask({
         id: Date.now().toString(),
-        description: taskText,
+        description: ideaText,
         category: "inbox",
-        createdAt: new Date(), // Ensure this is always a Date object
+        createdAt: new Date(),
         estimatedDuration: 1,
         cognitiveLoad: 1,
         urgency: 3,
@@ -43,7 +46,7 @@ export function QuickAdd() {
         allowPartialCompletion: false,
         minimumChunkSize: 15,
       })
-      setTaskText("")
+      setIdeaText("")
       setOpen(false)
     }
   }
@@ -58,17 +61,17 @@ export function QuickAdd() {
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Task</DialogTitle>
-          <DialogDescription>Quickly capture a task without interrupting your flow.</DialogDescription>
+          <DialogTitle>Add Idea</DialogTitle>
+          <DialogDescription>Quickly capture an idea without interrupting your flow.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="task">Task Description</Label>
+            <Label htmlFor="idea">Idea</Label>
             <Input
-              id="task"
-              placeholder="What needs to be done?"
-              value={taskText}
-              onChange={(e) => setTaskText(e.target.value)}
+              id="idea"
+              placeholder="What's on your mind?"
+              value={ideaText}
+              onChange={(e) => setIdeaText(e.target.value)}
               autoFocus
             />
           </div>

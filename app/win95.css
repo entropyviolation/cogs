@@ -1,0 +1,164 @@
+/**
+ * app/win95.css — Global Windows 95 skin
+ *
+ * A site-wide retro theme layered on top of the existing Tailwind/shadcn UI.
+ * The additive "chrome" rules (bevels, retro tabs, window dialogs, scrollbars)
+ * are wrapped in the zero-specificity `:where(...)` selector, so they only fill
+ * in defaults and ANY real component/utility style (including the Lists
+ * `.fm98` chrome) always wins. A handful of intentional overrides (desktop
+ * background, square corners, title colour) use ordinary low specificity and
+ * rely on this file being imported after globals.css.
+ *
+ * Nothing here changes behaviour — only appearance — and transitions/animations
+ * are preserved. Scope is `body.win95-app` (added in app/layout.tsx).
+ */
+
+/* Pixel font (Windows 95 era). Used app-wide via --w95-font below. */
+@font-face {
+  font-family: "w95fa";
+  src: url("/fonts/w95fa.woff") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --w95-surface: #c0c0c0;
+  --w95-face: #dfdfdf;
+  --w95-highlight: #ffffff;
+  --w95-shadow: #808080;
+  --w95-frame: #0a0a0a;
+  --w95-blue: #000080;
+  --w95-blue-light: #1084d0;
+  --w95-desktop: #0a7c7c;
+  --w95-raised: inset -1px -1px var(--w95-frame), inset 1px 1px var(--w95-highlight),
+    inset -2px -2px var(--w95-shadow), inset 2px 2px var(--w95-face);
+  --w95-sunken: inset -1px -1px var(--w95-highlight), inset 1px 1px var(--w95-frame),
+    inset -2px -2px var(--w95-face), inset 2px 2px var(--w95-shadow);
+  --w95-field: inset -1px -1px var(--w95-highlight), inset 1px 1px var(--w95-shadow),
+    inset -2px -2px var(--w95-face), inset 2px 2px var(--w95-frame);
+  --w95-font: "w95fa", Tahoma, "MS Sans Serif", Geneva, Verdana, system-ui, sans-serif;
+}
+
+/* Desktop + font. The pixel font is applied broadly (text elements, controls,
+ * headings) so the retro feel is consistent; it falls back to Tahoma where the
+ * webfont can't load. Slightly relaxed letter-spacing keeps it legible. */
+body.win95-app,
+body.win95-app button,
+body.win95-app input,
+body.win95-app textarea,
+body.win95-app select,
+body.win95-app [role="tab"],
+body.win95-app [role="menuitem"],
+body.win95-app h1,
+body.win95-app h2,
+body.win95-app h3,
+body.win95-app h4 {
+  font-family: var(--w95-font);
+}
+
+body.win95-app {
+  background: var(--w95-desktop);
+  letter-spacing: 0.2px;
+}
+
+body.win95-app main {
+  background: var(--w95-desktop);
+}
+
+/* App title */
+body.win95-app h1 {
+  color: #fff;
+  text-shadow: 1px 1px 0 #000;
+  letter-spacing: 0.5px;
+}
+
+/* Square corners (matches utility specificity; wins via import order). Circles
+ * (rounded-full) intentionally left alone. */
+:where(.win95-app) .rounded-sm,
+.win95-app .rounded,
+.win95-app .rounded-md,
+.win95-app .rounded-lg,
+.win95-app .rounded-xl,
+.win95-app .rounded-2xl,
+.win95-app .rounded-3xl {
+  border-radius: 0;
+}
+
+/* ---- Additive chrome (all zero-specificity via :where) ---- */
+
+/* Cards become little raised windows */
+:where(.win95-app .bg-card) {
+  box-shadow: var(--w95-raised);
+}
+
+/* Buttons: raised bevel; colours come from utilities and still win */
+:where(.win95-app button:not([role="tab"]):not([role="switch"]):not([data-no95])) {
+  box-shadow: var(--w95-raised);
+}
+:where(.win95-app button:not([role="tab"]):not([role="switch"]):not([data-no95]):not(:disabled):active) {
+  box-shadow: var(--w95-sunken);
+}
+
+/* Inputs / textareas / selects: sunken field */
+:where(
+    .win95-app input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"])
+  ),
+:where(.win95-app textarea),
+:where(.win95-app [role="combobox"]),
+:where(.win95-app select) {
+  box-shadow: var(--w95-field);
+}
+
+/* Tabs styled like a Win95 tab strip */
+:where(.win95-app [role="tablist"]) {
+  background: var(--w95-surface);
+  box-shadow: var(--w95-raised);
+  gap: 2px;
+  padding: 3px;
+}
+:where(.win95-app [role="tab"]) {
+  box-shadow: var(--w95-raised);
+  background: var(--w95-surface);
+  color: #000;
+}
+:where(.win95-app [role="tab"][data-state="active"]) {
+  box-shadow: var(--w95-sunken);
+  background: var(--w95-face);
+  font-weight: bold;
+}
+
+/* Dialogs / menus / listboxes become windows */
+:where(.win95-app [role="dialog"]),
+:where(.win95-app [role="alertdialog"]),
+:where(.win95-app [role="menu"]),
+:where(.win95-app [role="listbox"]) {
+  box-shadow: var(--w95-raised);
+  background: var(--w95-surface);
+}
+
+/* Squarify the Radix switch (needs to beat rounded-full utility) */
+.win95-app [role="switch"],
+.win95-app [role="switch"] > span {
+  border-radius: 0 !important;
+}
+
+/* ---- Scrollbars (Win95 chunky) ---- */
+:where(.win95-app) *::-webkit-scrollbar {
+  width: 16px;
+  height: 16px;
+}
+:where(.win95-app) *::-webkit-scrollbar-track {
+  background-color: #c0c0c0;
+  background-image: linear-gradient(45deg, #ffffff 25%, transparent 25%, transparent 75%, #ffffff 75%),
+    linear-gradient(45deg, #ffffff 25%, #c0c0c0 25%, #c0c0c0 75%, #ffffff 75%);
+  background-size: 2px 2px;
+  background-position: 0 0, 1px 1px;
+}
+:where(.win95-app) *::-webkit-scrollbar-thumb {
+  background-color: var(--w95-surface);
+  box-shadow: var(--w95-raised);
+}
+:where(.win95-app) *::-webkit-scrollbar-corner {
+  background: var(--w95-surface);
+}
